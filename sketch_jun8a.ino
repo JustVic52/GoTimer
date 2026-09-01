@@ -1,8 +1,11 @@
-#include <SPI.h>
 #include <TFT_eSPI.h>
+#include <unistd.h>
 #include <iostream>
 #include <ctime>
 #include <Arduino.h>
+#include <SPI.h>
+#include <FS.h>
+#include <SD.h>
 #include "ThreeScrambler.h"
 #include "TwoScrambler.h"
 #include "SkewbScrambler.h"
@@ -16,8 +19,14 @@
 #include "ClockScrambler.h"
 #include "Iconos.h"
 
+#define SD_SCK  18
+#define SD_MISO 19
+#define SD_MOSI 23
+#define SD_CS   5
+
 #define TFT_BL_PIN 27
 #define SENSOR_PIN 35
+
 #define UMBRAL_PRESION 500
 #define BUTTON_W 50
 #define BUTTON_H 25
@@ -53,6 +62,7 @@
 #define FLECHA_WH 30
 
 TFT_eSPI tft = TFT_eSPI();
+SPIClass sdSPI(HSPI);
 enum EstadoTimer { DETENIDO, ESPERANDO, PREPARADO, CORRIENDO };
 EstadoTimer estado = DETENIDO;
 
@@ -65,11 +75,13 @@ String mezcla = "";
 String selectedCube = " 3x3 ";
 int paginaScramble = 0;
 int paginaCubos = 1;
+bool sdDisponible = false;
+int dnfd = 1;
 
 void setup() {
     pinMode(TFT_BL_PIN, OUTPUT);
-    digitalWrite(TFT_BL_PIN, HIGH); 
-    
+    digitalWrite(TFT_BL_PIN, HIGH);
+
     tft.init();
     //tft.invertDisplay(true);
     tft.setRotation(1); // Modo horizontal (320x240)
@@ -79,12 +91,18 @@ void setup() {
     tft.setSwapBytes(true);
     //tft.invertDisplay(true);
     
+    sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    if (SD.begin(SD_CS, sdSPI)) {
+        sdDisponible = true;
+    }
+
     analogReadResolution(12);
 
     tft.fillScreen(TFT_BLACK);
     
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setTextSize(2);
+    tft.setCursor(22, 6);
 
     std::srand(std::time(nullptr));
 
@@ -108,7 +126,6 @@ void setup() {
     mezcla = generarMezcla();
     imprimirAlgoritmo(mezcla);
     mostrarTiempo(0);
-
 }
 
 void loop() {
@@ -307,11 +324,41 @@ void loop() {
         }
         if (touchX >= TIMER_ACTION4_X && touchX <= (TIMER_ACTION4_X + iconW) && 
             touchY >= TIMER_ACTION3_Y && touchY <= (TIMER_ACTION3_Y + iconH)) {
-          //TODO if (tiempoTranscurrido > 0) mostrarTiempo(-1); -> impmrimir DNF en rojo
+          if (dnfd == 1) {
+            if (tiempoTranscurrido > 0) {
+              mostrarTiempo(-1);
+              String nombreArchivo = "/" + selectedCube;
+              nombreArchivo.trim();
+              nombreArchivo += ".csv";
+              eliminarUltimaLinea(nombreArchivo.c_str());
+              String registro = String(-1) + "," + mezcla;
+              addLinea(nombreArchivo.c_str(), registro);
+              dnfd = 2;
+            }
+          } else {
+            mostrarTiempo(tiempoTranscurrido);
+            if (tiempoTranscurrido > 0) {
+              String nombreArchivo = "/" + selectedCube;
+              nombreArchivo.trim();
+              nombreArchivo += ".csv";
+              eliminarUltimaLinea(nombreArchivo.c_str());
+              String registro = String(tiempoTranscurrido) + "," + mezcla;
+              addLinea(nombreArchivo.c_str(), registro);
+              dnfd = 1;
+            }
+          }
         }
         if (touchX >= TIMER_ACTION5_X && touchX <= (TIMER_ACTION5_X + iconW) && 
             touchY >= TIMER_ACTION2_Y && touchY <= (TIMER_ACTION2_Y + iconH)) {
-          if (tiempoTranscurrido > 0) mostrarTiempo(tiempoTranscurrido + 2000);
+          if (tiempoTranscurrido > 0) {
+            mostrarTiempo(tiempoTranscurrido + 2000);
+            String nombreArchivo = "/" + selectedCube;
+            nombreArchivo.trim();
+            nombreArchivo += ".csv";
+            eliminarUltimaLinea(nombreArchivo.c_str());
+            String registro = String(tiempoTranscurrido + 2000) + "," + mezcla;
+            addLinea(nombreArchivo.c_str(), registro);
+          }
         }
         if (touchX >= TIMER_ACTION6_X && touchX <= (TIMER_ACTION6_X + iconW) && 
             touchY >= TIMER_ACTION3_Y && touchY <= (TIMER_ACTION3_Y + iconH)) {
@@ -363,6 +410,13 @@ void loop() {
 
       if (tocado && !(millis() - tiempoInicio <= 200)) {
         estado = DETENIDO;
+
+        String nombreArchivo = "/" + selectedCube;
+        nombreArchivo.trim();
+        nombreArchivo += ".csv";
+        String registro = String(tiempoTranscurrido) + "," + mezcla;
+        addLinea(nombreArchivo.c_str(), registro);
+
         mezcla = generarMezcla();
         imprimirAlgoritmo(mezcla);
         mostrarTiempo(tiempoTranscurrido);
@@ -480,21 +534,31 @@ String generarMezcla() {
   else if (selectedCube == "5blnd") return FiveScrambler::scramble().c_str();
 }
 
-void mostrarTiempo(unsigned long ms) {
-  unsigned long minutos = ms / 60000;
-  unsigned long segundos = (ms % 60000) / 1000;
-  unsigned long centesimas = (ms % 1000) / 10;
-
-  char buffer[16];
-  if (minutos > 0) {
-    sprintf(buffer, "%lu:%02lu.%02lu", minutos, segundos, centesimas);
+void mostrarTiempo(long ms) {
+  if (ms < 0) {
+    tft.fillRect(75, 175, 150, 25, TFT_BLACK);
+    tft.setTextSize(3);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.drawCentreString("DNF", 158, 175, 1);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextSize(2);
+    return;
   } else {
-    sprintf(buffer, "%lu.%02lu", segundos, centesimas);
-  }
+    unsigned long minutos = ms / 60000;
+    unsigned long segundos = (ms % 60000) / 1000;
+    unsigned long centesimas = (ms % 1000) / 10;
 
-  tft.setTextSize(3);
-  tft.drawCentreString(buffer, 158, 175, 1);
-  tft.setTextSize(2); 
+    char buffer[16];
+    if (minutos > 0) {
+      sprintf(buffer, "%lu:%02lu.%02lu", minutos, segundos, centesimas);
+    } else {
+      sprintf(buffer, "%lu.%02lu", segundos, centesimas);
+    }
+
+    tft.setTextSize(3);
+    tft.drawCentreString(buffer, 158, 175, 1);
+    tft.setTextSize(2); 
+  }
 }
 
 void imprimirAlgoritmo(String algoritmo) {
@@ -549,4 +613,94 @@ void imprimirAlgoritmo(String algoritmo) {
     String number = (paginaScramble == 0) ? "[1/2]" : "[2/2]";
     tft.drawString(number, 250, 145, 1);
   }
+}
+
+bool addLinea(const char* path, const String& linea) {
+  if (!sdDisponible) return false;
+
+  File file = SD.open(path, FILE_APPEND);
+  if (!file) {
+    return false;
+  }
+
+  file.println(linea);
+  file.close();
+  return true;
+}
+
+String leerArchivo(const char* path) {
+  if (!sdDisponible) return "";
+
+  File file = SD.open(path, FILE_READ);
+  if (!file) {
+    return "";
+  }
+
+  String contenido = "";
+  while (file.available()) {
+    contenido += (char)file.read();
+  }
+
+  file.close();
+  return contenido;
+}
+
+String leerLinea(const char* path) {
+  if (!sdDisponible) return "";
+
+  File file = SD.open(path, FILE_READ);
+  if (!file) {
+    return "";
+  }
+
+  String ultimaLinea = "";
+  while (file.available()) {
+    String linea = file.readStringUntil('\n');
+    linea.trim();
+    if (linea.length() > 0) {
+      ultimaLinea = linea;
+    }
+  }
+
+  file.close();
+  return ultimaLinea;
+}
+
+bool eliminarUltimaLinea(const char* path) {
+  if (!sdDisponible) return false;
+
+  File file = SD.open(path, FILE_READ);
+  if (!file) return false;
+
+  size_t tamano = file.size();
+  if (tamano == 0) {
+    file.close();
+    return false;
+  }
+
+  // Leemos hasta 512 bytes del final
+  size_t bytesALeer = (tamano > 512) ? 512 : tamano;
+  size_t offset = tamano - bytesALeer;
+
+  file.seek(offset);
+  uint8_t buffer[512];
+  file.read(buffer, bytesALeer);
+  file.close();
+
+  // Saltamos los \r y \n del final del archivo
+  int i = bytesALeer - 1;
+  while (i >= 0 && (buffer[i] == '\n' || buffer[i] == '\r')) {
+    i--;
+  }
+
+  // Buscamos el inicio de esa última línea
+  while (i >= 0 && buffer[i] != '\n') {
+    i--;
+  }
+
+  // Si no hay más líneas (era la única), el nuevo tamaño es 0
+  size_t nuevoTamano = (i < 0) ? 0 : (offset + i + 1);
+
+  String posixPath = "/sd" + String(path);
+  return truncate(posixPath.c_str(), nuevoTamano) == 0;
 }
