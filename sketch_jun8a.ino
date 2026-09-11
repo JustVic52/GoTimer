@@ -6,6 +6,9 @@
 #include <unistd.h>
 #include <ctime>
 #include <cmath>
+#include <deque>
+#include <vector>
+#include <algorithm>
 
 #include "ThreeScrambler.h"
 #include "TwoScrambler.h"
@@ -32,6 +35,7 @@
 #define DEBOUNCE_MS 300
 
 #define BUFFER_RECORDS 64
+#define MAX_BUFFER_SOLVES 20000
 
 // Coordenadas fijas
 #define BUTTON_W 50
@@ -107,6 +111,8 @@ const CubeConfig CUBOS[] = {
 };
 const size_t TOTAL_CUBOS = sizeof(CUBOS) / sizeof(CUBOS[0]);
 
+std::deque<long> sessionSolves;
+
 int cuboActual = 1; // Índice por defecto (3x3)
 unsigned long tiempoMano = 0;
 unsigned long tiempoInicio = 0;
@@ -117,6 +123,7 @@ unsigned long debounceFinTimer = 0;
 int pantallaActual = 1;
 String mezcla = "";
 String ultimaMezcla = "";
+SolveRecord ultimaSolve;
 int paginaScramble = 0;
 int paginaCubos = 1;
 bool sdDisponible = false;
@@ -136,9 +143,11 @@ void mostrarTiempo(long ms);
 void imprimirAlgoritmo(const String& algoritmo);
 String generarMezcla();
 String getCubePath();
+void registrarTiempo(long ms);
+int32_t calcularAO(int n);
 void actualizarRegistro(long ms);
-bool addLinea(const char* path, const String& linea);
-bool eliminarUltimaLinea(const char* path);
+void eliminarUltimaSolve();
+void loadSession();
 
 inline bool puntoEnArea(int px, int py, int x, int y, int w, int h) {
   return (px >= x && px <= (x + w) && py >= y && py <= (y + h));
@@ -165,6 +174,7 @@ void setup() {
 
   drawBasic();
   drawTimer();
+  loadSession();
   mezcla = generarMezcla();
   imprimirAlgoritmo(mezcla);
   mostrarTiempo(0);
@@ -218,6 +228,7 @@ void loop() {
             paginaCubos = 1;
             drawTimer();
             mezcla = generarMezcla();
+            loadSession();
             imprimirAlgoritmo(mezcla);
             mostrarTiempo(0);
             break;
@@ -266,6 +277,11 @@ void loop() {
             tft.drawFastHLine(0, 165, 320, TFT_WHITE);
             imprimirAlgoritmo(mezcla);
           }
+        }
+        // Eliminar última solve
+        else if (puntoEnArea(touchX, touchY, 75, 205, iconW, iconH)) {
+          ultimoToque = millis();
+          eliminarUltimaSolve();
         }
         // Rehacer última mezcla
         else if (puntoEnArea(touchX, touchY, 112, 205, iconW, iconH)) {
@@ -337,13 +353,16 @@ void loop() {
             tft.fillRect(100, 75, 219, 90, TFT_BLACK);
             tft.drawFastVLine(245, 165, 60, TFT_BLACK);
             tft.drawFastHLine(0, 165, 320, TFT_WHITE);
-            if (CUBOS[cuboActual].label == " 4x4 " || CUBOS[cuboActual].label == " 5x5 " || CUBOS[cuboActual].label == " 6x6 " || CUBOS[cuboActual].label == " 7x7 " || CUBOS[cuboActual].label == "clock" 
-              || CUBOS[cuboActual].label == "4blnd" || CUBOS[cuboActual].label == "5blnd" || CUBOS[cuboActual].label == "megam" || CUBOS[cuboActual].label == " fto " || CUBOS[cuboActual].label == " sq1 ") {
-              imprimirAlgoritmo(mezcla);
-            }
+            imprimirAlgoritmo(mezcla);
           }
         }
       }
+      break;
+    case 2: // pestaña de solves
+      break;
+    case 3: // pestaña de stats
+      break;
+    case 4: // ajustes
       break;
   }
 
@@ -386,25 +405,14 @@ void loop() {
         debounceFinTimer = millis() + 500;
         esDnf = false;
 
-        actualizarRegistro(tiempoTranscurrido);
         ultimaMezcla = mezcla;
         mezcla = generarMezcla();
         imprimirAlgoritmo(mezcla);
+        registrarTiempo(tiempoTranscurrido);
         mostrarTiempo(tiempoTranscurrido);
       }
       break;
   }
-}
-
-// Helpers SD
-String getCubePath(String appendage) {
-  return "/" + String(CUBOS[cuboActual].file) + appendage;
-}
-
-void actualizarRegistro(long ms) {
-  String path = getCubePath(".txt");
-  eliminarUltimaLinea(path.c_str());
-  addLinea(path.c_str(), String(ms) + "," + mezcla);
 }
 
 // Dibujado de pantallas
@@ -448,7 +456,86 @@ void drawAverages() {
   tft.drawFastVLine(100, 75, 90, TFT_WHITE);
   tft.drawFastVLine(245, 165, 30, TFT_WHITE);
 
-  //TODO hay que calcular y escribir las averages
+  int32_t ao5    = (sessionSolves.size() >= 5)    ? calcularAO(5)    : -2;
+  int32_t ao12   = (sessionSolves.size() >= 12)   ? calcularAO(12)   : -2;
+  int32_t ao50   = (sessionSolves.size() >= 50)   ? calcularAO(50)   : -2;
+  int32_t ao100  = (sessionSolves.size() >= 100)  ? calcularAO(100)  : -2;
+  int32_t ao1000 = (sessionSolves.size() >= 1000) ? calcularAO(1000) : -2;
+
+  int32_t bestSingle = -1;
+  int64_t sumaTiempos = 0;
+  uint32_t validos = 0;
+
+  for (size_t i = 0; i < sessionSolves.size(); i++) {
+    long t = sessionSolves[i];
+    if (t >= 0) {
+      if (bestSingle == -1 || t < bestSingle) {
+        bestSingle = t;
+      }
+      sumaTiempos += t;
+      validos++;
+    }
+  }
+
+  int32_t mediaAritmetica = (validos > 0) ? (int32_t)(sumaTiempos / validos) : -2;
+
+  char buf[16];
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+
+  // Columna Izquierda (Ao5, Ao12, Ao50, Ao100)
+  tft.drawString("Ao5: ", 106, 85);
+  formatearTiempoAO(ao5, buf, sizeof(buf));
+  tft.drawString(buf, 146, 85);
+
+  tft.drawString("Ao12: ", 106, 105);
+  formatearTiempoAO(ao12, buf, sizeof(buf));
+  tft.drawString(buf, 146, 105);
+
+  tft.drawString("Ao50: ", 106, 125);
+  formatearTiempoAO(ao50, buf, sizeof(buf));
+  tft.drawString(buf, 146, 125);
+
+  tft.drawString("Ao100: ", 106, 145);
+  formatearTiempoAO(ao100, buf, sizeof(buf));
+  tft.drawString(buf, 146, 145);
+
+  // Columna Derecha (Ao1k, Media, Best, Cuenta)
+  tft.drawString("Ao1k: ", 220, 85);
+  formatearTiempoAO(ao1000, buf, sizeof(buf));
+  tft.drawString(buf, 265, 85);
+
+  tft.drawString("Media: ", 220, 105);
+  formatearTiempoAO(mediaAritmetica, buf, sizeof(buf));
+  tft.drawString(buf, 265, 105);
+
+  tft.drawString("Best: ", 220, 125);
+  formatearTiempoAO((bestSingle != -1) ? bestSingle : -2, buf, sizeof(buf));
+  tft.drawString(buf, 265, 125);
+
+  tft.drawString("Cuenta: ", 220, 145);
+  snprintf(buf, sizeof(buf), "%u", (unsigned int)sessionSolves.size());
+  tft.drawString(buf, 265, 145);
+
+  tft.setTextSize(2);
+}
+
+void formatearTiempoAO(int32_t ms, char* buffer, size_t len) {
+  if (ms == -1) {
+    snprintf(buffer, len, "DNF");
+  } else if (ms == -2) {
+    snprintf(buffer, len, "--");
+  } else {
+    unsigned long minutos = ms / 60000;
+    unsigned long segundos = (ms % 60000) / 1000;
+    unsigned long centesimas = (ms % 1000) / 10;
+    if (minutos > 0) {
+      snprintf(buffer, len, "%lu:%02lu.%02lu", minutos, segundos, centesimas);
+    } else {
+      snprintf(buffer, len, "%lu.%02lu", segundos, centesimas);
+    }
+  }
 }
 
 void drawMezcla() {
@@ -521,6 +608,7 @@ void mostrarTiempo(long ms) {
 void imprimirAlgoritmo(const String& algoritmo) {
   tft.fillRect(1, 26, 316, 137, TFT_BLACK);
   tft.setTextFont(1);
+  tft.setTextSize(2);
 
   int x = 10, y = 30;
   int cursorX = x, cursorY = y;
@@ -565,40 +653,195 @@ void imprimirAlgoritmo(const String& algoritmo) {
 }
 
 // Manejo de SD
-bool addLinea(const char* path, const String& linea) {
-  if (!sdDisponible) return false;
-  File file = SD.open(path, FILE_APPEND);
-  if (!file) return false;
-  file.println(linea);
-  file.close();
-  return true;
-}
+void registrarTiempo(long ms) {
+  if (!sdDisponible) return;
 
-bool eliminarUltimaLinea(const char* path) {
-  if (!sdDisponible) return false;
+  addToSession(ms);
 
-  File file = SD.open(path, FILE_READ);
-  if (!file) return false;
-
-  size_t tamano = file.size();
-  if (tamano == 0) {
-    file.close();
-    return false;
+  int32_t tiempo = ms;
+  int32_t ao5 = -1;
+  int32_t ao12 = -1;
+  if (sessionSolves.size() >= 5) {
+    ao5 = calcularAO(5);
+  }
+  if (sessionSolves.size() >= 12) {
+    ao12 = calcularAO(12);
   }
 
-  size_t bytesALeer = (tamano > 512) ? 512 : tamano;
-  size_t offset = tamano - bytesALeer;
-
-  file.seek(offset);
-  uint8_t buffer[512];
-  file.read(buffer, bytesALeer);
+  String path = getCubePath(".txt");
+  File file = SD.open(path.c_str(), FILE_APPEND);
+  if (!file) return;
+  uint32_t offsetMezcla = file.position();
+  uint32_t longMezcla = ultimaMezcla.length();
+  file.print(ultimaMezcla);
   file.close();
 
-  int i = bytesALeer - 1;
-  while (i >= 0 && (buffer[i] == '\n' || buffer[i] == '\r')) i--;
-  while (i >= 0 && buffer[i] != '\n') i--;
+  SolveRecord solve = { 
+    (int32_t)ms, 
+    ao5, 
+    ao12, 
+    0,
+    offsetMezcla, 
+    longMezcla 
+  };
+  ultimaSolve = solve;
+  path = getCubePath(".dat");
+  file = SD.open(path.c_str(), FILE_APPEND);
+  if (!file) return;
+  file.write((const uint8_t*)&solve, sizeof(SolveRecord));
+  file.close();
+}
 
-  size_t nuevoTamano = (i < 0) ? 0 : (offset + i + 1);
-  String posixPath = "/sd" + String(path);
-  return truncate(posixPath.c_str(), nuevoTamano) == 0;
+int32_t calcularAO(int n) {
+  if (sessionSolves.size() < (size_t)n) return -1;
+
+  std::vector<long> ventana(sessionSolves.end() - n, sessionSolves.end());
+
+  int dnfs = 0;
+  for (size_t i = 0; i < ventana.size(); i++) {
+    if (ventana[i] < 0) {
+      dnfs++;
+      ventana[i] = 2147483647;
+    }
+  }
+
+  if (dnfs > 1) return -1;
+
+  std::sort(ventana.begin(), ventana.end());
+
+  int64_t suma = 0;
+  for (int i = 1; i < n - 1; i++) {
+    suma += ventana[i];
+  }
+
+  return (int32_t)(suma / (n - 2));
+}
+
+void addToSession(long ms) {
+  if (sessionSolves.size() >= MAX_BUFFER_SOLVES) {
+    sessionSolves.pop_front();
+  }
+  sessionSolves.push_back(ms);
+}
+
+String getCubePath(String appendage) {
+  return "/" + String(CUBOS[cuboActual].file) + appendage;
+}
+
+void actualizarRegistro(long ms) {
+  if (!sdDisponible || sessionSolves.empty()) return;
+
+  sessionSolves.back() = ms;
+  int32_t ao5 = calcularAO(5);
+  int32_t ao12 = calcularAO(12);
+
+  String path = getCubePath(".dat");
+  File file = SD.open(path.c_str(), "r+");
+  if (!file) return;
+
+  size_t size = file.size();
+  if (size < sizeof(SolveRecord)) {
+    file.close();
+    return;
+  }
+
+  size_t posUltimo = size - sizeof(SolveRecord);
+  file.seek(posUltimo);
+
+  SolveRecord previo;
+  file.read((uint8_t*)&previo, sizeof(SolveRecord));
+
+  SolveRecord solve = { 
+    (int32_t)ms, 
+    ao5, 
+    ao12, 
+    previo.archivado,
+    previo.offsetMezcla, 
+    previo.longMezcla 
+  };
+
+  file.seek(posUltimo);
+  file.write((const uint8_t*)&solve, sizeof(SolveRecord));
+  file.close();
+
+  ultimaSolve = solve;
+}
+
+void eliminarUltimaSolve() {
+  if (!sdDisponible || sessionSolves.empty()) return;
+
+  sessionSolves.pop_back();
+
+  String path = getCubePath(".dat");
+  File file = SD.open(path.c_str(), FILE_READ);
+  if (!file) return;
+
+  size_t size = file.size();
+  if (size < sizeof(SolveRecord)) {
+    file.close();
+    return;
+  }
+
+  SolveRecord registroAEliminar;
+  file.seek(size - sizeof(SolveRecord));
+  file.read((uint8_t*)&registroAEliminar, sizeof(SolveRecord));
+  file.close();
+
+  String posixTxt = "/sd" + getCubePath(".txt");
+  truncate(posixTxt.c_str(), registroAEliminar.offsetMezcla);
+
+  String posix = "/sd" + path;
+  truncate(posix.c_str(), size - sizeof(SolveRecord));
+
+  tiempoTranscurrido = 0;
+  esDnf = false;
+  ultimaSolve = {};
+  mostrarTiempo(0);
+}
+
+void loadSession() {
+  sessionSolves.clear();
+  ultimaSolve = {};
+  ultimaMezcla = "";
+
+  if (!sdDisponible) return;
+
+  String path = getCubePath(".dat");
+  File file = SD.open(path.c_str(), FILE_READ);
+  if (!file) return;
+
+  size_t totalRecords = file.size() / sizeof(SolveRecord);
+  if (totalRecords == 0) {
+    file.close();
+    return;
+  }
+
+  SolveRecord bloque[BUFFER_RECORDS];
+
+  for (size_t i = 0; i < totalRecords; i += BUFFER_RECORDS) {
+    size_t aLeer = std::min((size_t)BUFFER_RECORDS, totalRecords - i);
+    file.read((uint8_t*)bloque, aLeer * sizeof(SolveRecord));
+
+    for (size_t j = 0; j < aLeer; j++) {
+      if (bloque[j].archivado == 0) {
+        addToSession(bloque[j].tiempo);
+        ultimaSolve = bloque[j];
+      }
+    }
+  }
+  file.close();
+
+  if (ultimaSolve.longMezcla > 0) {
+    path = getCubePath(".txt");
+    File file = SD.open(path.c_str(), FILE_READ);
+    if (file) {
+      file.seek(ultimaSolve.offsetMezcla);
+      char* buf = new char[ultimaSolve.longMezcla + 1];
+      file.read((uint8_t*)buf, ultimaSolve.longMezcla);
+      buf[ultimaSolve.longMezcla] = '\0';
+      ultimaMezcla = String(buf);
+      delete[] buf;
+      file.close();
+    }
+  }
 }
