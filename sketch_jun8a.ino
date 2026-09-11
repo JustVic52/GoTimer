@@ -270,6 +270,18 @@ void loop() {
         // Rehacer última mezcla
         else if (puntoEnArea(touchX, touchY, 112, 205, iconW, iconH)) {
           if (ultimaMezcla != "") {
+            if (averagesShown) {
+            tft.fillRect(100, 75, 219, 90, TFT_BLACK);
+            tft.drawFastVLine(245, 165, 60, TFT_BLACK);
+            tft.drawFastHLine(0, 165, 320, TFT_WHITE);
+            averagesShown = false;
+            }
+            if (mezclaShown) {
+            tft.fillRect(1, 50, 220, 115, TFT_BLACK);
+            tft.drawFastVLine(75, 165, 60, TFT_BLACK);
+            tft.drawFastHLine(0, 165, 320, TFT_WHITE);
+            mezclaShown = false;
+            }
             imprimirAlgoritmo(ultimaMezcla);
             mostrarTiempo(0);
           }
@@ -295,6 +307,18 @@ void loop() {
         else if (puntoEnArea(touchX, touchY, 222, 206, iconW, iconH)) {
           ultimoToque = millis();
           mezcla = generarMezcla();
+          if (averagesShown) {
+            tft.fillRect(100, 75, 219, 90, TFT_BLACK);
+            tft.drawFastVLine(245, 165, 60, TFT_BLACK);
+            tft.drawFastHLine(0, 165, 320, TFT_WHITE);
+            averagesShown = false;
+          }
+          if (mezclaShown) {
+            tft.fillRect(1, 50, 220, 115, TFT_BLACK);
+            tft.drawFastVLine(75, 165, 60, TFT_BLACK);
+            tft.drawFastHLine(0, 165, 320, TFT_WHITE);
+            mezclaShown = false;
+          }
           imprimirAlgoritmo(mezcla);
         }
         // Ver medias (Averages)
@@ -388,6 +412,8 @@ void drawTimes() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
   tft.fillRect(131, 25, 49, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 210, TFT_BLACK);
+
+  tft.drawFastHLine(0, 215, 320, TFT_WHITE);
 }
 
 void drawStats() {

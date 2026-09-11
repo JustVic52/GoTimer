@@ -13,7 +13,7 @@ string MegaScrambler::scramble() {
     for (int i = 0; i < 10; i++) {
         for (int j = 0; j < 10; j++) {
             scramble += j%2==0 ? "R" : "D";
-            scramble += rand()%2==0 ? "++ " : "-- ";
+            scramble += rand()%2==0 ? "+ " : "- ";
         }
         scramble += rand()%2==0 ? "U   " : "U'  ";
     }
