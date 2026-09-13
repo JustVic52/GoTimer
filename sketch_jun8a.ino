@@ -150,7 +150,6 @@ SolveRecord ultimaSolve;
 int paginaScramble = 0;
 int paginaCubos = 1;
 bool sdDisponible = false;
-bool esDnf = false;
 bool averagesShown = false;
 bool mezclaShown = false;
 int paginaSolves = 0;
@@ -561,7 +560,6 @@ void loop() {
       if (tocadoSensor && (tiempoTranscurrido > 200)) {
         estado = DETENIDO;
         debounceFinTimer = millis() + 500;
-        esDnf = false;
 
         ultimaMezcla = mezcla;
         mezcla = generarMezcla();
@@ -1236,7 +1234,6 @@ void eliminarUltimaSolve() {
   truncate(posix.c_str(), size - sizeof(SolveRecord));
 
   tiempoTranscurrido = 0;
-  esDnf = false;
   ultimaSolve = {};
   mostrarTiempo(0);
 }
