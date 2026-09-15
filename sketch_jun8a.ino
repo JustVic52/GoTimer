@@ -37,9 +37,9 @@
 #define BUFFER_RECORDS 64
 #define MAX_BUFFER_SOLVES 20000
 
-#define BUTTON_W 50
+#define BUTTON_W 60
 #define BUTTON_H 25
-#define BUTTON_CUBE_W 87
+#define BUTTON_CUBE_W 80
 #define FLECHA_X 280
 #define FLECHA_Y 218
 #define FLECHA_WH 30
@@ -162,6 +162,7 @@ bool popupSolveVisible = false;
 PopupData solvePopup;
 bool popupSiNoVisible = false;
 int accionPendiente = -1;
+bool popupNumVisible = false;
 int parametroN = 0;
 
 // Prototipos
@@ -188,6 +189,8 @@ void abrirPopupSiNo(int type, int n = 0);
 bool procesarToquePopupSiNo(uint16_t touchX, uint16_t touchY);
 void formatearTiempoAO(int32_t ms, char* buffer, size_t len);
 void addToSession(int32_t ms, uint8_t penalty, uint32_t indexSD);
+void abrirPoupNum();
+void procesarToquePopupNum(uint16_t touchX, uint16_t touchY);
 
 inline bool puntoEnArea(int px, int py, int x, int y, int w, int h) {
   return (px >= x && px <= (x + w) && py >= y && py <= (y + h));
@@ -237,8 +240,13 @@ void loop() {
 
   if (tocadoPantalla && estado == DETENIDO && (millis() - ultimoToque > DEBOUNCE_MS)) {
 
+    // Popups
     if (popupSiNoVisible) {
       procesarToquePopupSiNo(touchX, touchY);
+      return;
+    }
+    else if (popupNumVisible) {
+      procesarToquePopupNum(touchX, touchY);
       return;
     }
 
@@ -248,7 +256,7 @@ void loop() {
       if (pantallaActual != 0) { pantallaActual = 0; drawCubes(); }
     } 
     // Timer
-    else if (puntoEnArea(touchX, touchY, 87, 0, BUTTON_W, BUTTON_H)) {
+    else if (puntoEnArea(touchX, touchY, 80, 0, BUTTON_W, BUTTON_H)) {
       ultimoToque = millis();
       if (pantallaActual != 1) {
         pantallaActual = 1;
@@ -259,7 +267,7 @@ void loop() {
       }
     } 
     // Times
-    else if (puntoEnArea(touchX, touchY, 137, 0, BUTTON_W, BUTTON_H)) {
+    else if (puntoEnArea(touchX, touchY, 140, 0, BUTTON_W, BUTTON_H)) {
       ultimoToque = millis();
       if (pantallaActual != 2) {
         pantallaActual = 2; drawTimes();
@@ -268,7 +276,7 @@ void loop() {
       }
     } 
     // Stats
-    else if (puntoEnArea(touchX, touchY, 187, 0, BUTTON_W, BUTTON_H)) {
+    else if (puntoEnArea(touchX, touchY, 200, 0, BUTTON_W, BUTTON_H)) {
       ultimoToque = millis();
       if (pantallaActual != 3) {
         pantallaActual = 3; drawStats();
@@ -277,7 +285,7 @@ void loop() {
       }
     }
     // Settings
-    else if (puntoEnArea(touchX, touchY, 237, 0, BUTTON_CUBE_W, BUTTON_H)) {
+    else if (puntoEnArea(touchX, touchY, 260, 0, BUTTON_CUBE_W, BUTTON_H)) {
       ultimoToque = millis();
       if (pantallaActual != 4) {
         pantallaActual = 4; drawSettings();
@@ -493,13 +501,13 @@ void loop() {
         if (puntoEnArea(touchX, touchY, 12, 215, iconW, iconH)) {
           abrirPopupSiNo(ELIMINAR_SESION, 0);
         }
-        // desarchivar tiempos
+        // archivar sesión
         else if (puntoEnArea(touchX, touchY, 62, 215, iconW, iconH)) {
           abrirPopupSiNo(ARCHIVAR_SESION, 0);
         }
-        // archivar sesión
+        // desarchivar sesión
         else if (puntoEnArea(touchX, touchY, 112, 215, iconW, iconH)) {
-          abrirPopupSiNo(DESARCHIVAR_TIEMPOS, 0);
+          abrirPopupNum();
         }
         // flecha izquierda
         else if (puntoEnArea(touchX, touchY, 160, 216, 40, 24)) {
@@ -592,10 +600,9 @@ void loop() {
   }
 }
 
-// Dibujado de pantallas
 void drawTimes() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.fillRect(138, 25, 49, 5, TFT_BLACK);
+  tft.fillRect(141, 25, 59, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 210, TFT_BLACK);
 
   tft.pushImage(12,  215, iconW, iconH, binD);
@@ -784,26 +791,26 @@ void drawPopupSolve() {
 
 void drawStats() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.fillRect(188, 25, 49, 5, TFT_BLACK);
+  tft.fillRect(201, 25, 59, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
 }
 
 void drawSettings() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.fillRect(238, 25, 81, 5, TFT_BLACK);
+  tft.fillRect(261, 25, 58, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
 }
 
 void drawTimer() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.fillRect(88, 25, 49, 5, TFT_BLACK);
+  tft.fillRect(81, 25, 59, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
   tft.fillRect(1, 1, 79, 23, TFT_BLACK);
-  tft.setCursor(15, 6);
+
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.print(CUBOS[cuboActual].label);
-
+  tft.drawString(CUBOS[cuboActual].label, 11, 6, 1);
+  
   tft.drawFastHLine(0, 165, 320, TFT_WHITE);
 
   tft.pushImage(10,  175, bigIconW, bigIconH, vermezclaD);
@@ -916,7 +923,7 @@ void drawMezcla() {
 
 void drawCubes() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.fillRect(1, 25, 86, 5, TFT_BLACK);
+  tft.fillRect(1, 25, 79, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -931,17 +938,17 @@ void drawCubes() {
 }
 
 void drawBasic() {
-  tft.setTextSize(2);
   tft.drawRect(0, 0, 320, 240, TFT_WHITE);
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.drawFastVLine(87,  0, 25, TFT_WHITE);
-  tft.drawFastVLine(137, 0, 25, TFT_WHITE);
-  tft.drawFastVLine(187, 0, 25, TFT_WHITE);
-  tft.drawFastVLine(237, 0, 25, TFT_WHITE);
+  tft.drawFastVLine(80,  0, 25, TFT_WHITE);
+  tft.drawFastVLine(140, 0, 25, TFT_WHITE);
+  tft.drawFastVLine(200, 0, 25, TFT_WHITE);
+  tft.drawFastVLine(260, 0, 25, TFT_WHITE);
 
-  tft.pushImage(100,  1, iconW, iconH, cronoD);
-  tft.pushImage(150, 1, iconW, iconH, solvesD);
-  tft.pushImage(200, 1, iconW, iconH, estatsD);
+  tft.pushImage(97,  1, iconW, iconH, cronoD);
+  tft.pushImage(157, 1, iconW, iconH, solvesD);
+  tft.pushImage(217, 1, iconW, iconH, estatsD);
+  tft.pushImage(277, 1, iconW, iconH, settingsD);
 }
 
 void abrirPopupSiNo(int type, int n) {
@@ -958,7 +965,7 @@ void abrirPopupSiNo(int type, int n) {
       option = "eliminar sesion";
       break;
     case DESARCHIVAR_TIEMPOS:
-      option = String("desarchivar ") + n + " tiempos";
+      option = String("desarch. ") + n + " tiempos";
       break;
     case ARCHIVAR_SESION:
       option = "archivar sesion";
@@ -969,8 +976,8 @@ void abrirPopupSiNo(int type, int n) {
   }
 
   // Cuadro del popup
-  tft.fillRect(20, 60, 280, 120, TFT_BLACK);
-  tft.drawRect(20, 60, 280, 120, TFT_WHITE);
+  tft.fillRect(15, 60, 290, 120, TFT_BLACK);
+  tft.drawRect(15, 60, 290, 120, TFT_WHITE);
 
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextFont(1);
@@ -993,6 +1000,7 @@ bool procesarToquePopupSiNo(uint16_t touchX, uint16_t touchY) {
 
   // Botón SÍ
   if (puntoEnArea(touchX, touchY, 60, 130, 80, 30)) {
+    ultimoToque = millis();
     popupSiNoVisible = false;
 
     switch (accionPendiente) {
@@ -1043,6 +1051,7 @@ bool procesarToquePopupSiNo(uint16_t touchX, uint16_t touchY) {
 
   // Botón NO
   if (puntoEnArea(touchX, touchY, 180, 130, 80, 30)) {
+    ultimoToque = millis();
     popupSiNoVisible = false;
 
     if (pantallaActual == 1) {
@@ -1062,6 +1071,105 @@ bool procesarToquePopupSiNo(uint16_t touchX, uint16_t touchY) {
   }
 
   return true; // Si está visible pero se pulsa fuera, bloquea otros toques
+}
+
+void abrirPopupNum() {
+  popupNumVisible = true;
+
+  tft.fillRect(40, 40, 240, 160, TFT_BLACK);
+  tft.drawRect(40, 40, 240, 160, TFT_WHITE);
+
+  tft.drawFastHLine(40, 80, 240, TFT_WHITE);
+  tft.drawFastHLine(40, 120, 240, TFT_WHITE);
+  tft.drawFastHLine(40, 160, 240, TFT_WHITE);
+  tft.drawFastVLine(100, 80, 120, TFT_WHITE);
+  tft.drawFastVLine(160, 80, 120, TFT_WHITE);
+  tft.drawFastVLine(220, 80, 120, TFT_WHITE);
+
+  tft.setTextSize(2);
+  tft.drawRect(253, 45, 22, 22, TFT_WHITE);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawCentreString("X", 265, 49, 1);
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  tft.drawString("Desarchivar:", 45, 53);
+  tft.drawString("(max. 20k)", 45, 62);
+  tft.setTextSize(2);
+  tft.drawString("1", 65, 92);
+  tft.drawString("2", 125, 92);
+  tft.drawString("3", 185, 92);
+  tft.drawString("4", 65, 132);
+  tft.drawString("5", 125, 132);
+  tft.drawString("6", 185, 132); // jaja
+  tft.drawString("7", 65, 172); // sixseven
+  tft.drawString("8", 125, 172);
+  tft.drawString("9", 185, 172);
+  tft.drawString("0", 245, 132);
+  tft.drawString("<-", 237, 92);
+  tft.drawString("OK", 238, 172);
+}
+
+void procesarToquePopupNum(uint16_t touchX, uint16_t touchY) {
+  if (!popupNumVisible) return;
+
+  static String bufferTeclado = "0";
+  char digito = '\0';
+
+  if (puntoEnArea(touchX, touchY, 40, 80, 60, 40)) digito = '1';
+  else if (puntoEnArea(touchX, touchY, 100, 80, 60, 40)) digito = '2';
+  else if (puntoEnArea(touchX, touchY, 160, 80, 60, 40)) digito = '3';
+  else if (puntoEnArea(touchX, touchY, 40, 120, 60, 40)) digito = '4';
+  else if (puntoEnArea(touchX, touchY, 100, 120, 60, 40)) digito = '5';
+  else if (puntoEnArea(touchX, touchY, 160, 120, 60, 40)) digito = '6';
+  else if (puntoEnArea(touchX, touchY, 40, 160, 60, 40)) digito = '7';
+  else if (puntoEnArea(touchX, touchY, 100, 160, 60, 40)) digito = '8';
+  else if (puntoEnArea(touchX, touchY, 160, 160, 60, 40)) digito = '9';
+  else if (puntoEnArea(touchX, touchY, 220, 120, 60, 40)) digito = '0';
+  // Retroceso
+  else if (puntoEnArea(touchX, touchY, 220, 80, 60, 40)) {
+    ultimoToque = millis();
+    if (bufferTeclado.length() > 0) {
+      bufferTeclado.remove(bufferTeclado.length() - 1);
+    }
+  }
+  // OK
+  else if (puntoEnArea(touchX, touchY, 220, 160, 60, 40)) {
+    parametroN = bufferTeclado.toInt() < 20000 ? bufferTeclado.toInt() : 20000;
+    bufferTeclado = "";
+    popupNumVisible = false;
+    drawTimes();
+    abrirPopupSiNo(DESARCHIVAR_TIEMPOS, parametroN);
+    return;
+  }
+  // cerrar
+  else if (puntoEnArea(touchX, touchY, 253, 45, 22, 22)) {
+    ultimoToque = millis();
+    bufferTeclado = "";
+    popupNumVisible = false;
+    drawTimes();
+    return;
+  }
+  else {
+    return;
+  }
+
+  if (digito != '\0') {
+    ultimoToque = millis();
+    if (bufferTeclado == "0") bufferTeclado = "";
+    if (bufferTeclado.length() < 5) {
+      bufferTeclado += digito;
+    }
+  }
+
+  tft.fillRect(160, 41, 89, 38, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  int bufferText = 0;
+  if (bufferTeclado.length() == 0) bufferText = tft.textWidth(" ", 1);
+  else bufferText = tft.textWidth(" ", 1) * bufferTeclado.length();
+  tft.drawString(bufferTeclado.length() > 0 ? bufferTeclado : "0", 245 - bufferText, 52);
 }
 
 String generarMezcla() {
@@ -1141,7 +1249,6 @@ void imprimirAlgoritmo(const String& algoritmo) {
   }
 }
 
-// Manejo de SD
 void registrarTiempo(long ms) {
   if (!sdDisponible) return;
 
