@@ -39,7 +39,7 @@
 
 #define BUTTON_W 50
 #define BUTTON_H 25
-#define BUTTON_CUBE_W 80
+#define BUTTON_CUBE_W 87
 #define FLECHA_X 280
 #define FLECHA_Y 218
 #define FLECHA_WH 30
@@ -81,8 +81,6 @@ struct CubeConfig {
 
 struct SolveRecord {
   int32_t tiempo;
-  int32_t ao5;
-  int32_t ao12;
   uint8_t archivado;
   uint8_t penalty;
   uint32_t offsetMezcla;
@@ -106,6 +104,12 @@ struct PopupData {
   SolveRecord record;
   String scramble;
   int indiceGlobal;
+};
+
+struct SessionItem {
+  int32_t  tiempo;
+  uint8_t  penalty;
+  uint32_t indexSD;
 };
 
 // Generadores específicos con parámetros adaptados a la firma ScrambleFunc
@@ -134,7 +138,7 @@ const CubeConfig CUBOS[] = {
 };
 const size_t TOTAL_CUBOS = sizeof(CUBOS) / sizeof(CUBOS[0]);
 
-std::deque<long> sessionSolves;
+std::deque<SessionItem> sessionSolves;
 
 int cuboActual = 1; // Índice por defecto (3x3)
 unsigned long tiempoMano = 0;
@@ -182,6 +186,8 @@ void cerrarPopupSolve();
 void drawPopupSolve();
 void abrirPopupSiNo(int type, int n = 0);
 bool procesarToquePopupSiNo(uint16_t touchX, uint16_t touchY);
+void formatearTiempoAO(int32_t ms, char* buffer, size_t len);
+void addToSession(int32_t ms, uint8_t penalty, uint32_t indexSD);
 
 inline bool puntoEnArea(int px, int py, int x, int y, int w, int h) {
   return (px >= x && px <= (x + w) && py >= y && py <= (y + h));
@@ -217,8 +223,11 @@ void setup() {
   loadSession();
   mezcla = generarMezcla();
   imprimirAlgoritmo(mezcla);
-  //ultimaMezcla = mezcla;
-  //registrarTiempo(12360);
+  //for (int i = 0; i < 30; i++) {
+  //  ultimaMezcla = generarMezcla();
+  //  long tiempoAleatorio = random(10000, 15001);
+  //  registrarTiempo(tiempoAleatorio);
+  //}
   mostrarTiempo(0);
 }
 
@@ -239,7 +248,7 @@ void loop() {
       if (pantallaActual != 0) { pantallaActual = 0; drawCubes(); }
     } 
     // Timer
-    else if (puntoEnArea(touchX, touchY, 80, 0, BUTTON_W, BUTTON_H)) {
+    else if (puntoEnArea(touchX, touchY, 87, 0, BUTTON_W, BUTTON_H)) {
       ultimoToque = millis();
       if (pantallaActual != 1) {
         pantallaActual = 1;
@@ -250,7 +259,7 @@ void loop() {
       }
     } 
     // Times
-    else if (puntoEnArea(touchX, touchY, 130, 0, BUTTON_W, BUTTON_H)) {
+    else if (puntoEnArea(touchX, touchY, 137, 0, BUTTON_W, BUTTON_H)) {
       ultimoToque = millis();
       if (pantallaActual != 2) {
         pantallaActual = 2; drawTimes();
@@ -259,10 +268,19 @@ void loop() {
       }
     } 
     // Stats
-    else if (puntoEnArea(touchX, touchY, 180, 0, BUTTON_W, BUTTON_H)) {
+    else if (puntoEnArea(touchX, touchY, 187, 0, BUTTON_W, BUTTON_H)) {
       ultimoToque = millis();
       if (pantallaActual != 3) {
         pantallaActual = 3; drawStats();
+        averagesShown = false;
+        mezclaShown = false;
+      }
+    }
+    // Settings
+    else if (puntoEnArea(touchX, touchY, 237, 0, BUTTON_CUBE_W, BUTTON_H)) {
+      ultimoToque = millis();
+      if (pantallaActual != 4) {
+        pantallaActual = 4; drawSettings();
         averagesShown = false;
         mezclaShown = false;
       }
@@ -429,34 +447,36 @@ void loop() {
           }
           // ver mezcla
           else if (puntoEnArea(touchX, touchY, 20, 176, 42, 42)) {
-            //verMezcla(PEQUE); //hay que hacer la adaptación del método AAAAAA
+            //drawMezclaPeque(); //dos métodos pero ambos llaman a generar mezcla en cada scrambler
           }
-          // dnf
+          // DNF
           else if (puntoEnArea(touchX, touchY, 155, 198, iconW, iconH)) {
             solvePopup.record.penalty = (solvePopup.record.penalty == 2) ? 0 : 2;
 
+            uint32_t idxSD = sessionSolves[solvePopup.indiceGlobal].indexSD;
             String pathDat = getCubePath(".dat");
             File f = SD.open(pathDat.c_str(), "r+");
             if (f) {
-              f.seek((size_t)solvePopup.indiceGlobal * sizeof(SolveRecord));
+              f.seek((size_t)idxSD * sizeof(SolveRecord));
               f.write((const uint8_t*)&solvePopup.record, sizeof(SolveRecord));
               f.close();
             }
-            sessionSolves[solvePopup.indiceGlobal] = getTiempoEfectivo(solvePopup.record.tiempo, solvePopup.record.penalty);
+            sessionSolves[solvePopup.indiceGlobal].penalty = solvePopup.record.penalty;
             drawPopupSolve();
           }
           // +2
           else if (puntoEnArea(touchX, touchY, 193, 198, iconW, iconH)) {
             solvePopup.record.penalty = (solvePopup.record.penalty == 1) ? 0 : 1;
 
+            uint32_t idxSD = sessionSolves[solvePopup.indiceGlobal].indexSD;
             String pathDat = getCubePath(".dat");
             File f = SD.open(pathDat.c_str(), "r+");
             if (f) {
-              f.seek((size_t)solvePopup.indiceGlobal * sizeof(SolveRecord));
+              f.seek((size_t)idxSD * sizeof(SolveRecord));
               f.write((const uint8_t*)&solvePopup.record, sizeof(SolveRecord));
               f.close();
             }
-            sessionSolves[solvePopup.indiceGlobal] = getTiempoEfectivo(solvePopup.record.tiempo, solvePopup.record.penalty);
+            sessionSolves[solvePopup.indiceGlobal].penalty = solvePopup.record.penalty;
             drawPopupSolve();
           }
           // archivar
@@ -470,15 +490,15 @@ void loop() {
           break;
         }
         // eliminar sesión
-        if (puntoEnArea(touchX, touchY, 0, 215, iconW, iconH)) {
+        if (puntoEnArea(touchX, touchY, 12, 215, iconW, iconH)) {
           abrirPopupSiNo(ELIMINAR_SESION, 0);
         }
         // desarchivar tiempos
-        else if (puntoEnArea(touchX, touchY, 50, 215, iconW, iconH)) {
+        else if (puntoEnArea(touchX, touchY, 62, 215, iconW, iconH)) {
           abrirPopupSiNo(ARCHIVAR_SESION, 0);
         }
         // archivar sesión
-        else if (puntoEnArea(touchX, touchY, 100, 215, iconW, iconH)) {
+        else if (puntoEnArea(touchX, touchY, 112, 215, iconW, iconH)) {
           abrirPopupSiNo(DESARCHIVAR_TIEMPOS, 0);
         }
         // flecha izquierda
@@ -497,7 +517,7 @@ void loop() {
             drawTimes();
           }
         }
-        // Selección de celda en la cuadrícula
+        // Selección de solve
         else {
           int primerIndice = sessionSolves.size() - 1 - (paginaSolves * SOLVES_PER_PAGE);
           for (int r = 0; r < SOLVES_GRID_ROWS; r++) {
@@ -524,6 +544,7 @@ void loop() {
   }
 
   // Lectura del sensor para el Timer
+  // TODO rehacer para cuando tenga el sensor -> digitalRead();
   bool tocadoSensor = analogRead(SENSOR_PIN) > UMBRAL_PRESION;
 
   switch (estado) {
@@ -574,7 +595,7 @@ void loop() {
 // Dibujado de pantallas
 void drawTimes() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.fillRect(131, 25, 49, 5, TFT_BLACK);
+  tft.fillRect(138, 25, 49, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 210, TFT_BLACK);
 
   tft.pushImage(12,  215, iconW, iconH, binD);
@@ -626,15 +647,18 @@ void drawTimes() {
       if (solveIdx >= 0) {
         tft.drawRect(x, y, CELL_W, CELL_H, TFT_WHITE);
 
-        // Tiempo
         tft.setTextSize(1);
-        long t = sessionSolves[solveIdx];
-        if (t < 0) {
+        SessionItem item = sessionSolves[solveIdx];
+        if (item.penalty == 2) {
           tft.setTextColor(TFT_RED, TFT_BLACK);
           tft.drawCentreString("DNF", x + (CELL_W / 2), y + 7, 1);
         } else {
           tft.setTextColor(TFT_WHITE, TFT_BLACK);
-          formatearTiempoAO(t, buf, sizeof(buf));
+          long tEfectivo = getTiempoEfectivo(item.tiempo, item.penalty);
+          formatearTiempoAO(tEfectivo, buf, sizeof(buf));
+          if (item.penalty == 1) {
+            strncat(buf, "+", sizeof(buf) - strlen(buf) - 1);
+          }
           tft.drawCentreString(buf, x + (CELL_W / 2), y + 7, 1);
         }
       }
@@ -642,14 +666,16 @@ void drawTimes() {
   }
 }
 
-void abrirPopupSolve(int indiceGlobal) {
+void abrirPopupSolve(int indiceSession) {
   if (!sdDisponible) return;
+
+  uint32_t idxSD = sessionSolves[indiceSession].indexSD;
 
   String pathDat = getCubePath(".dat");
   File fileDat = SD.open(pathDat.c_str(), FILE_READ);
   if (!fileDat) return;
 
-  size_t offsetByte = (size_t)indiceGlobal * sizeof(SolveRecord);
+  size_t offsetByte = (size_t)idxSD * sizeof(SolveRecord);
   if (fileDat.size() < offsetByte + sizeof(SolveRecord)) {
     fileDat.close();
     return;
@@ -660,7 +686,7 @@ void abrirPopupSolve(int indiceGlobal) {
   fileDat.close();
 
   solvePopup.scramble = "";
-  solvePopup.indiceGlobal = indiceGlobal;
+  solvePopup.indiceGlobal = indiceSession;
 
   if (solvePopup.record.longMezcla > 0) {
     String pathTxt = getCubePath(".txt");
@@ -758,16 +784,22 @@ void drawPopupSolve() {
 
 void drawStats() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.fillRect(181, 25, 49, 5, TFT_BLACK);
+  tft.fillRect(188, 25, 49, 5, TFT_BLACK);
+  tft.fillRect(1, 26, 318, 213, TFT_BLACK);
+}
+
+void drawSettings() {
+  tft.drawFastHLine(0, 25, 320, TFT_WHITE);
+  tft.fillRect(238, 25, 81, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
 }
 
 void drawTimer() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.fillRect(81, 25, 49, 5, TFT_BLACK);
+  tft.fillRect(88, 25, 49, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
   tft.fillRect(1, 1, 79, 23, TFT_BLACK);
-  tft.setCursor(12, 6);
+  tft.setCursor(15, 6);
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.print(CUBOS[cuboActual].label);
@@ -801,7 +833,7 @@ void drawAverages() {
   uint32_t validos = 0;
 
   for (size_t i = 0; i < sessionSolves.size(); i++) {
-    long t = sessionSolves[i];
+    long t = getTiempoEfectivo(sessionSolves[i].tiempo, sessionSolves[i].penalty);
     if (t >= 0) {
       if (bestSingle == -1 || t < bestSingle) {
         bestSingle = t;
@@ -884,7 +916,7 @@ void drawMezcla() {
 
 void drawCubes() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.fillRect(1, 25, 79, 5, TFT_BLACK);
+  tft.fillRect(1, 25, 86, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -902,14 +934,14 @@ void drawBasic() {
   tft.setTextSize(2);
   tft.drawRect(0, 0, 320, 240, TFT_WHITE);
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
-  tft.drawFastVLine(80,  0, 25, TFT_WHITE);
-  tft.drawFastVLine(130, 0, 25, TFT_WHITE);
-  tft.drawFastVLine(180, 0, 25, TFT_WHITE);
-  tft.drawFastVLine(230, 0, 25, TFT_WHITE);
+  tft.drawFastVLine(87,  0, 25, TFT_WHITE);
+  tft.drawFastVLine(137, 0, 25, TFT_WHITE);
+  tft.drawFastVLine(187, 0, 25, TFT_WHITE);
+  tft.drawFastVLine(237, 0, 25, TFT_WHITE);
 
-  tft.pushImage(92,  1, iconW, iconH, cronoD);
-  tft.pushImage(142, 1, iconW, iconH, solvesD);
-  tft.pushImage(192, 1, iconW, iconH, estatsD);
+  tft.pushImage(100,  1, iconW, iconH, cronoD);
+  tft.pushImage(150, 1, iconW, iconH, solvesD);
+  tft.pushImage(200, 1, iconW, iconH, estatsD);
 }
 
 void abrirPopupSiNo(int type, int n) {
@@ -968,25 +1000,25 @@ bool procesarToquePopupSiNo(uint16_t touchX, uint16_t touchY) {
         if (pantallaActual == 1) {
           eliminarUltimaSolve();
         } else if (pantallaActual == 2) {
-          // Lógica para eliminar la solve seleccionada en el popupSolve
-          // eliminarSolve(solvePopup.indiceGlobal);
+          eliminarSolve();
         }
         break;
       case ELIMINAR_SESION:
-        // eliminarSesion();
+        modificarSesion(ELIMINAR_SESION);
         break;
       case DESARCHIVAR_TIEMPOS:
-        // desarchivarTiempos(parametroN);
+        //desarchivarTiempos(parametroN);
         break;
       case ARCHIVAR_SESION:
-        // archivarSesion();
+        modificarSesion(ARCHIVAR_SESION);
         break;
       case ARCHIVAR_TIEMPO:
         solvePopup.record.archivado = solvePopup.record.archivado ? 0 : 1;
+        uint32_t idxSD = sessionSolves[solvePopup.indiceGlobal].indexSD;
         String pathDat = getCubePath(".dat");
         File f = SD.open(pathDat.c_str(), "r+");
         if (f) {
-          f.seek((size_t)solvePopup.indiceGlobal * sizeof(SolveRecord));
+          f.seek((size_t)idxSD * sizeof(SolveRecord));
           f.write((const uint8_t*)&solvePopup.record, sizeof(SolveRecord));
           f.close();
         }
@@ -1113,10 +1145,15 @@ void imprimirAlgoritmo(const String& algoritmo) {
 void registrarTiempo(long ms) {
   if (!sdDisponible) return;
 
-  addToSession(ms);
+  String pathDat = getCubePath(".dat");
+  File fileDatCheck = SD.open(pathDat.c_str(), FILE_READ);
+  uint32_t nuevoIndexSD = 0;
+  if (fileDatCheck) {
+    nuevoIndexSD = fileDatCheck.size() / sizeof(SolveRecord);
+    fileDatCheck.close();
+  }
 
-  int32_t ao5 = (sessionSolves.size() >= 5) ? calcularAO(5) : -1;
-  int32_t ao12 = (sessionSolves.size() >= 12) ? calcularAO(12) : -1;
+  addToSession((int32_t)ms, 0, nuevoIndexSD);
 
   String path = getCubePath(".txt");
   File file = SD.open(path.c_str(), FILE_APPEND);
@@ -1128,31 +1165,33 @@ void registrarTiempo(long ms) {
 
   SolveRecord solve = { 
     (int32_t)ms, 
-    ao5, 
-    ao12, 
-    0, //archivado
-    0, //penalty
+    0, // archivado
+    0, // penalty
     offsetMezcla, 
     longMezcla 
   };
   ultimaSolve = solve;
-  path = getCubePath(".dat");
-  file = SD.open(path.c_str(), FILE_APPEND);
-  if (!file) return;
-  file.write((const uint8_t*)&solve, sizeof(SolveRecord));
-  file.close();
+
+  File fileDat = SD.open(pathDat.c_str(), FILE_APPEND);
+  if (!fileDat) return;
+  fileDat.write((const uint8_t*)&solve, sizeof(SolveRecord));
+  fileDat.close();
 }
 
 int32_t calcularAO(int n) {
   if (sessionSolves.size() < (size_t)n) return -1;
 
-  std::vector<long> ventana(sessionSolves.end() - n, sessionSolves.end());
+  std::vector<long> ventana;
+  ventana.reserve(n);
 
   int dnfs = 0;
-  for (size_t i = 0; i < ventana.size(); i++) {
-    if (ventana[i] < 0) {
+  for (auto it = sessionSolves.end() - n; it != sessionSolves.end(); ++it) {
+    long t = getTiempoEfectivo(it->tiempo, it->penalty);
+    if (t < 0) {
       dnfs++;
-      ventana[i] = 2147483647;
+      ventana.push_back(2147483647);
+    } else {
+      ventana.push_back(t);
     }
   }
 
@@ -1168,11 +1207,11 @@ int32_t calcularAO(int n) {
   return (int32_t)(suma / (n - 2));
 }
 
-void addToSession(long ms) {
+void addToSession(int32_t ms, uint8_t penalty, uint32_t indexSD) {
   if (sessionSolves.size() >= MAX_BUFFER_SOLVES) {
     sessionSolves.pop_front();
   }
-  sessionSolves.push_back(ms);
+  sessionSolves.push_back({ms, penalty, indexSD});
 }
 
 String getCubePath(String appendage) {
@@ -1183,13 +1222,7 @@ void actualizarRegistro(uint8_t nuevaPenalty) {
   if (!sdDisponible || sessionSolves.empty()) return;
 
   ultimaSolve.penalty = nuevaPenalty;
-  long tEfectivo = getTiempoEfectivo(ultimaSolve.tiempo, ultimaSolve.penalty);
-  sessionSolves.back() = tEfectivo;
-
-  int32_t ao5 = calcularAO(5);
-  int32_t ao12 = calcularAO(12);
-  ultimaSolve.ao5 = ao5;
-  ultimaSolve.ao12 = ao12;
+  sessionSolves.back().penalty = nuevaPenalty;
 
   String path = getCubePath(".dat");
   File file = SD.open(path.c_str(), "r+");
@@ -1238,6 +1271,50 @@ void eliminarUltimaSolve() {
   mostrarTiempo(0);
 }
 
+void eliminarSolve() {
+  if (!sdDisponible || sessionSolves.empty()) return;
+
+  solvePopup.record.archivado = 2;
+
+  String pathDat = getCubePath(".dat");
+  File fileDat = SD.open(pathDat.c_str(), "r+");
+  if (!fileDat) return;
+  fileDat.seek(sessionSolves[solvePopup.indiceGlobal].indexSD * sizeof(SolveRecord));
+  fileDat.write((const uint8_t*)&solvePopup.record, sizeof(SolveRecord));
+  fileDat.close();
+  loadSession();
+  cerrarPopupSolve();
+}
+
+void modificarSesion(int type) {
+  if (!sdDisponible || sessionSolves.empty()) return;
+
+  String pathDat = getCubePath(".dat");
+  File fileDat = SD.open(pathDat.c_str(), "r+");
+  if (!fileDat) return;
+
+  int estado = -1;
+  switch (type) {
+    case ARCHIVAR_SESION:
+      estado = 0;
+      break;
+    case ELIMINAR_SESION:
+      estado = 2;
+      break;
+  }
+  for (int i = 0; i < sessionSolves.size(); i++) {
+    size_t offsetArchivado = (size_t)sessionSolves[i].indexSD * sizeof(SolveRecord) + sizeof(int32_t);
+    fileDat.seek(offsetArchivado);
+    fileDat.write((const uint8_t*)&estado, sizeof(uint8_t));
+  }
+  fileDat.close();
+  sessionSolves.clear();
+  ultimaSolve = {};
+  paginaSolves = 0;
+  tiempoTranscurrido = 0;
+  drawTimes();
+}
+
 void loadSession() {
   sessionSolves.clear();
   ultimaSolve = {};
@@ -1257,16 +1334,17 @@ void loadSession() {
 
   SolveRecord bloque[BUFFER_RECORDS];
 
+  uint32_t registroIdx = 0;
   for (size_t i = 0; i < totalRecords; i += BUFFER_RECORDS) {
     size_t aLeer = std::min((size_t)BUFFER_RECORDS, totalRecords - i);
     file.read((uint8_t*)bloque, aLeer * sizeof(SolveRecord));
 
     for (size_t j = 0; j < aLeer; j++) {
       if (bloque[j].archivado == 0) {
-        long tEfectivo = getTiempoEfectivo(bloque[j].tiempo, bloque[j].penalty);
-        addToSession(tEfectivo);
+        addToSession(bloque[j].tiempo, bloque[j].penalty, registroIdx);
         ultimaSolve = bloque[j];
       }
+      registroIdx++;
     }
   }
   file.close();
