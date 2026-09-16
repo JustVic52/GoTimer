@@ -814,19 +814,22 @@ void drawTimer() {
   tft.drawFastHLine(0, 165, 320, TFT_WHITE);
 
   tft.pushImage(10,  175, bigIconW, bigIconH, vermezclaD);
-  tft.pushImage(75,  205, iconW,    iconH,    eliminarD);
+  tft.pushImage(75,  205, iconW,    iconH,    binD);
   tft.pushImage(112, 205, iconW,    iconH,    againD);
   tft.pushImage(150, 206, iconW,    iconH,    dnfD);
   tft.pushImage(186, 205, iconW,    iconH,    plustwoD);
-  tft.pushImage(222, 206, iconW,    iconH,    nuevamezclaD);
+  tft.pushImage(222, 205, iconW,    iconH,    nuevamezclaD);
   tft.pushImage(256, 175, bigIconW, bigIconH, bigsolvesD);
 }
 
 void drawAverages() {
-  tft.fillRect(100, 75, 219, 90, TFT_BLACK);
+  tft.fillRect(120, 55, 199, 110, TFT_BLACK);
+  tft.fillRect(1, 75, 129, 90, TFT_BLACK);
   tft.fillRect(246, 163, 73, 5, TFT_BLACK);
-  tft.drawFastHLine(100, 75, 220, TFT_WHITE);
-  tft.drawFastVLine(100, 75, 90, TFT_WHITE);
+  tft.drawFastHLine(120, 55, 318, TFT_WHITE);
+  tft.drawFastHLine(44, 75, 77, TFT_WHITE);
+  tft.drawFastVLine(120, 55, 20, TFT_WHITE);
+  tft.drawFastVLine(44, 75, 90, TFT_WHITE);
   tft.drawFastVLine(245, 165, 30, TFT_WHITE);
 
   int32_t ao5    = (sessionSolves.size() >= 5)    ? calcularAO(5)    : -2;
@@ -850,6 +853,13 @@ void drawAverages() {
     }
   }
 
+  long lastTimes[5] = {-2, -2, -2, -2, -2};
+  int total = sessionSolves.size();
+  for (int i = 0; i < 5 && i < total; i++) {
+    const auto& solve = sessionSolves[total - 1 - i];
+    lastTimes[i] = getTiempoEfectivo(solve.tiempo, solve.penalty);
+  }
+
   int32_t mediaAritmetica = (validos > 0) ? (int32_t)(sumaTiempos / validos) : -2;
 
   char buf[16];
@@ -858,38 +868,44 @@ void drawAverages() {
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
 
   // Columna Izquierda (Ao5, Ao12, Ao50, Ao100)
-  tft.drawString("Ao5: ", 106, 85);
+  tft.drawString("Ao5: ", 54, 85);
   formatearTiempoAO(ao5, buf, sizeof(buf));
-  tft.drawString(buf, 146, 85);
+  tft.drawString(buf, 92, 85);
 
-  tft.drawString("Ao12: ", 106, 105);
+  tft.drawString("Ao12: ", 54, 105);
   formatearTiempoAO(ao12, buf, sizeof(buf));
-  tft.drawString(buf, 146, 105);
+  tft.drawString(buf, 92, 105);
 
-  tft.drawString("Ao50: ", 106, 125);
+  tft.drawString("Ao50: ", 54, 125);
   formatearTiempoAO(ao50, buf, sizeof(buf));
-  tft.drawString(buf, 146, 125);
+  tft.drawString(buf, 92, 125);
 
-  tft.drawString("Ao100: ", 106, 145);
+  tft.drawString("Ao100: ", 54, 145);
   formatearTiempoAO(ao100, buf, sizeof(buf));
-  tft.drawString(buf, 146, 145);
+  tft.drawString(buf, 92, 145);
 
   // Columna Derecha (Ao1k, Media, Best, Cuenta)
-  tft.drawString("Ao1k: ", 215, 85);
+  tft.drawString("Ao1000: ", 155, 85);
   formatearTiempoAO(ao1000, buf, sizeof(buf));
-  tft.drawString(buf, 260, 85);
+  tft.drawString(buf, 200, 85);
 
-  tft.drawString("Media: ", 215, 105);
+  tft.drawString("Media: ", 155, 105);
   formatearTiempoAO(mediaAritmetica, buf, sizeof(buf));
-  tft.drawString(buf, 260, 105);
+  tft.drawString(buf, 200, 105);
 
-  tft.drawString("Best: ", 215, 125);
+  tft.drawString("Best: ", 155, 125);
   formatearTiempoAO((bestSingle != -1) ? bestSingle : -2, buf, sizeof(buf));
-  tft.drawString(buf, 260, 125);
+  tft.drawString(buf, 200, 125);
 
-  tft.drawString("Cuenta: ", 215, 145);
+  tft.drawString("Cuenta: ", 155, 145);
   snprintf(buf, sizeof(buf), "%u", (unsigned int)sessionSolves.size());
-  tft.drawString(buf, 260, 145);
+  tft.drawString(buf, 200, 145);
+
+  tft.drawString("Resultados recientes: ", 130, 65);
+  for (int i = 0; i < 5; i++) {
+    formatearTiempoAO(lastTimes[i], buf, sizeof(buf));
+    tft.drawString(buf, 265, 65 + (i * 20));
+  }
 
   tft.setTextSize(2);
 }
@@ -1015,7 +1031,7 @@ bool procesarToquePopupSiNo(uint16_t touchX, uint16_t touchY) {
         modificarSesion(ELIMINAR_SESION);
         break;
       case DESARCHIVAR_TIEMPOS:
-        //desarchivarTiempos(parametroN);
+        desarchivarTiempos();
         break;
       case ARCHIVAR_SESION:
         modificarSesion(ARCHIVAR_SESION);
@@ -1202,7 +1218,7 @@ void mostrarTiempo(long ms) {
 }
 
 void imprimirAlgoritmo(const String& algoritmo) {
-  tft.fillRect(1, 26, 316, 137, TFT_BLACK);
+  tft.fillRect(1, 26, 318, 137, TFT_BLACK);
   tft.setTextFont(1);
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -1381,13 +1397,12 @@ void eliminarUltimaSolve() {
 void eliminarSolve() {
   if (!sdDisponible || sessionSolves.empty()) return;
 
-  solvePopup.record.archivado = 2;
-
+  uint8_t nuevoEstado = 2;
   String pathDat = getCubePath(".dat");
   File fileDat = SD.open(pathDat.c_str(), "r+");
   if (!fileDat) return;
-  fileDat.seek(sessionSolves[solvePopup.indiceGlobal].indexSD * sizeof(SolveRecord));
-  fileDat.write((const uint8_t*)&solvePopup.record, sizeof(SolveRecord));
+  fileDat.seek(sessionSolves[solvePopup.indiceGlobal].indexSD * sizeof(SolveRecord) + sizeof(int32_t));
+  fileDat.write(&nuevoEstado, sizeof(uint8_t));
   fileDat.close();
   loadSession();
   cerrarPopupSolve();
@@ -1403,7 +1418,7 @@ void modificarSesion(int type) {
   int estado = -1;
   switch (type) {
     case ARCHIVAR_SESION:
-      estado = 0;
+      estado = 1;
       break;
     case ELIMINAR_SESION:
       estado = 2;
@@ -1419,6 +1434,43 @@ void modificarSesion(int type) {
   ultimaSolve = {};
   paginaSolves = 0;
   tiempoTranscurrido = 0;
+  drawTimes();
+}
+
+void desarchivarTiempos() {
+  if (parametroN <= 0 || !sdDisponible) return;
+
+  String pathDat = getCubePath(".dat");
+  File fileDat = SD.open(pathDat.c_str(), "r+");
+  if (!fileDat) return;
+
+  size_t totalRecords = fileDat.size() / sizeof(SolveRecord);
+  if (totalRecords == 0) {
+    fileDat.close();
+    return;
+  }
+
+  int desarchivados = 0;
+  int pos = totalRecords - 1;
+  uint8_t estado = 0;
+  uint8_t nuevoEstado = 0;
+
+  while (desarchivados < parametroN && pos >= 0) {
+    size_t offsetArchivado = (size_t)pos * sizeof(SolveRecord) + sizeof(int32_t);
+    
+    fileDat.seek(offsetArchivado);
+    fileDat.read(&estado, sizeof(uint8_t));
+
+    if (estado == 1) {
+      fileDat.seek(offsetArchivado);
+      fileDat.write(&nuevoEstado, sizeof(uint8_t));
+      desarchivados++;
+    }
+    pos--;
+  }
+  fileDat.close();
+
+  loadSession();
   drawTimes();
 }
 
@@ -1449,24 +1501,9 @@ void loadSession() {
     for (size_t j = 0; j < aLeer; j++) {
       if (bloque[j].archivado == 0) {
         addToSession(bloque[j].tiempo, bloque[j].penalty, registroIdx);
-        ultimaSolve = bloque[j];
       }
       registroIdx++;
     }
   }
   file.close();
-
-  if (ultimaSolve.longMezcla > 0) {
-    path = getCubePath(".txt");
-    File file = SD.open(path.c_str(), FILE_READ);
-    if (file) {
-      file.seek(ultimaSolve.offsetMezcla);
-      char* buf = new char[ultimaSolve.longMezcla + 1];
-      file.read((uint8_t*)buf, ultimaSolve.longMezcla);
-      buf[ultimaSolve.longMezcla] = '\0';
-      ultimaMezcla = String(buf);
-      delete[] buf;
-      file.close();
-    }
-  }
 }
