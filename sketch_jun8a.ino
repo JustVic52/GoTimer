@@ -31,7 +31,6 @@
 #define TFT_BL_PIN 27
 #define SENSOR_PIN 35
 
-#define UMBRAL_PRESION 500
 #define DEBOUNCE_MS 300
 
 #define BUFFER_RECORDS 64
@@ -205,6 +204,7 @@ inline long getTiempoEfectivo(int32_t tiempoBase, uint8_t penalty) {
 void setup() {
   pinMode(TFT_BL_PIN, OUTPUT);
   digitalWrite(TFT_BL_PIN, HIGH);
+  pinMode(SENSOR_PIN, INPUT);
 
   tft.init();
   //tft.setRotation(1);
@@ -217,7 +217,6 @@ void setup() {
   sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   sdDisponible = SD.begin(SD_CS, sdSPI);
 
-  analogReadResolution(12);
   tft.fillScreen(TFT_BLACK);
   std::srand(std::time(nullptr));
 
@@ -263,7 +262,8 @@ void loop() {
         drawTimer();
         if (mezcla.length() == 0) mezcla = generarMezcla();
         imprimirAlgoritmo(mezcla);
-        mostrarTiempo(0);
+        if (ultimaSolve.tiempo != 0) mostrarTiempo(getTiempoEfectivo(ultimaSolve.tiempo, ultimaSolve.penalty));
+        else mostrarTiempo(0);
       }
     } 
     // Times
@@ -372,6 +372,7 @@ void loop() {
         }
         // Rehacer última mezcla
         else if (puntoEnArea(touchX, touchY, 112, 205, iconW, iconH)) {
+          ultimoToque = millis();
           if (ultimaMezcla != "" && tiempoTranscurrido != 0) {
             if (averagesShown) {
             tft.fillRect(100, 75, 219, 90, TFT_BLACK);
@@ -386,11 +387,11 @@ void loop() {
             mezclaShown = false;
             }
             imprimirAlgoritmo(ultimaMezcla);
-            mostrarTiempo(0);
           }
         }
         // DNF
         else if (puntoEnArea(touchX, touchY, 150, 206, iconW, iconH)) {
+          ultimoToque = millis();
           if (tiempoTranscurrido > 0) {
             uint8_t nuevaPen = (ultimaSolve.penalty == 2) ? 0 : 2;
             actualizarRegistro(nuevaPen);
@@ -399,6 +400,7 @@ void loop() {
         }
         // +2 segundos
         else if (puntoEnArea(touchX, touchY, 186, 205, iconW, iconH)) {
+          ultimoToque = millis();
           if (tiempoTranscurrido > 0) {
             uint8_t nuevaPen = (ultimaSolve.penalty == 1) ? 0 : 1;
             actualizarRegistro(nuevaPen);
@@ -470,6 +472,7 @@ void loop() {
               f.close();
             }
             sessionSolves[solvePopup.indiceGlobal].penalty = solvePopup.record.penalty;
+            if (solvePopup.record.offsetMezcla == ultimaSolve.offsetMezcla) ultimaSolve = solvePopup.record;
             drawPopupSolve();
           }
           // +2
@@ -485,6 +488,7 @@ void loop() {
               f.close();
             }
             sessionSolves[solvePopup.indiceGlobal].penalty = solvePopup.record.penalty;
+            if (solvePopup.record.offsetMezcla == ultimaSolve.offsetMezcla) ultimaSolve = solvePopup.record;
             drawPopupSolve();
           }
           // archivar
@@ -553,7 +557,7 @@ void loop() {
 
   // Lectura del sensor para el Timer
   // TODO rehacer para cuando tenga el sensor -> digitalRead();
-  bool tocadoSensor = analogRead(SENSOR_PIN) > UMBRAL_PRESION;
+  bool tocadoSensor = (digitalRead(SENSOR_PIN) == HIGH) && pantallaActual == 1;
 
   switch (estado) {
     case DETENIDO:
@@ -1278,13 +1282,14 @@ void registrarTiempo(long ms) {
 
   addToSession((int32_t)ms, 0, nuevoIndexSD);
 
-  String path = getCubePath(".txt");
-  File file = SD.open(path.c_str(), FILE_APPEND);
-  if (!file) return;
-  uint32_t offsetMezcla = file.position();
+  String pathTxt = getCubePath(".txt");
+  File fileTxt = SD.open(pathTxt.c_str(), FILE_APPEND);
+  if (!fileTxt) return;
+  
+  uint32_t offsetMezcla = fileTxt.size();
   uint32_t longMezcla = ultimaMezcla.length();
-  file.print(ultimaMezcla);
-  file.close();
+  fileTxt.print(ultimaMezcla);
+  fileTxt.close();
 
   SolveRecord solve = { 
     (int32_t)ms, 
