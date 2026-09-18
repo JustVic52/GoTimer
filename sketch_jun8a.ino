@@ -207,18 +207,25 @@ void setup() {
   pinMode(SENSOR_PIN, INPUT);
 
   tft.init();
+  //tft.invertDisplay(true);
   //tft.setRotation(1);
   //uint16_t calData[5] = { 229, 3433, 369, 3383, 1 };
   tft.setRotation(3);
   uint16_t calData[5] = { 210, 3456, 371, 3387, 7 };
+  //uint16_t calData[5];
+  //tft.calibrateTouch(calData, TFT_WIHTE, TFT_BLACK, 15);
   tft.setTouch(calData);
+  //for (int i = 0; i < 5; i++) {
+  //  tft.println(calData[i]);
+  //  if (i < 4) Serial.print(", ");
+  //}
   tft.setSwapBytes(true);
 
   sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   sdDisponible = SD.begin(SD_CS, sdSPI);
 
   tft.fillScreen(TFT_BLACK);
-  std::srand(std::time(nullptr));
+  std::srand(esp_random());
 
   drawBasic();
   drawTimer();
