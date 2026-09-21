@@ -164,33 +164,6 @@ int accionPendiente = -1;
 bool popupNumVisible = false;
 int parametroN = 0;
 
-// Prototipos
-void drawBasic();
-void drawTimer();
-void drawTimes();
-void drawStats();
-void drawCubes();
-void drawAverages();
-void drawMezcla();
-void mostrarTiempo(long ms);
-void imprimirAlgoritmo(const String& algoritmo);
-String generarMezcla();
-String getCubePath();
-void registrarTiempo(long ms);
-int32_t calcularAO(int n);
-void actualizarRegistro(long ms);
-void eliminarUltimaSolve();
-void loadSession();
-void abrirPopupSolve(int indiceGlobal);
-void cerrarPopupSolve();
-void drawPopupSolve();
-void abrirPopupSiNo(int type, int n = 0);
-bool procesarToquePopupSiNo(uint16_t touchX, uint16_t touchY);
-void formatearTiempoAO(int32_t ms, char* buffer, size_t len);
-void addToSession(int32_t ms, uint8_t penalty, uint32_t indexSD);
-void abrirPoupNum();
-void procesarToquePopupNum(uint16_t touchX, uint16_t touchY);
-
 inline bool puntoEnArea(int px, int py, int x, int y, int w, int h) {
   return (px >= x && px <= (x + w) && py >= y && py <= (y + h));
 }
@@ -800,10 +773,177 @@ void drawPopupSolve() {
   tft.setTextSize(2);
 }
 
+void drawStatGraph() {
+  if (sessionSolves.size() < 2) return;
+
+  int graphX = 20, graphY = 30, graphW = 280, graphH = 120;
+
+  // 2. Encontrar mínimo y máximo para escalar el eje Y
+  long tMin = sessionSolves[0].tiempo;
+  long tMax = tMin;
+  for (SessionItem s : sessionSolves) {
+    long t = getTiempoEfectivo(s.tiempo, s.penalty);
+    if (t < tMin) tMin = t;
+    if (t > tMax) tMax = t;
+  }
+  if (tMin == tMax) tMax += 1000; // Evitar división por cero si todos los tiempos son idénticos
+
+  // Limpiar fondo del gráfico y dibujar ejes
+  tft.fillRect(graphX, graphY, graphW, graphH, TFT_BLACK);
+  tft.drawRect(graphX, graphY, graphW, graphH, TFT_WHITE);
+
+  // 3. Submuestreo o distribución horizontal:
+  // Si hay más tiempos que píxeles de ancho (GRAPH_W), se debe interpolar/avanzar a saltos.
+  // En este ejemplo simple, asumimos N puntos distribuidos uniformemente:
+  int prevPixelX = 0;
+  int prevPixelY = 0;
+
+  for (size_t i = 0; i < sessionSolves.size(); i++) {
+    int px = graphX + (int)((i * (graphW - 1)) / (sessionSolves.size() - 1));
+    int py = graphY + graphH - 1 - (int)(((sessionSolves[i].tiempo - tMin) * (graphH - 1)) / (tMax - tMin));
+
+    if (i > 0) {
+      tft.drawLine(prevPixelX, prevPixelY, px, py, TFT_GREEN);
+    }
+
+    prevPixelX = px;
+    prevPixelY = py;
+  }
+}
+
+SessionStats calcularEstadisticasSesion() {
+  SessionStats stats;
+  if (sessionSolves.empty()) return stats;
+
+  int64_t suma = 0;
+  std::vector<long> validos;
+  validos.reserve(sessionSolves.size());
+
+  for (const auto& item : sessionSolves) {
+    stats.count++;
+    long t = getTiempoEfectivo(item.tiempo, item.penalty);
+    if (t < 0) {
+      stats.dnfs++;
+    } else {
+      validos.push_back(t);
+      suma += t;
+      if (stats.bestSingle == -1 || t < stats.bestSingle) stats.bestSingle = t;
+      if (stats.worstSingle == -1 || t > stats.worstSingle) stats.worstSingle = t;
+    }
+  }
+
+  if (!validos.empty()) {
+    stats.media = (int32_t)(suma / validos.size());
+
+    // Desviación estándar
+    float sumaVarianza = 0.0f;
+    for (long t : validos) {
+      float diff = t - stats.media;
+      sumaVarianza += diff * diff;
+    }
+    stats.desviacion = std::sqrt(sumaVarianza / validos.size()) / 1000.0f; // en segundos
+  }
+
+  stats.currentAo5  = (sessionSolves.size() >= 5)  ? calcularAO(5)  : -1;
+  stats.currentAo12 = (sessionSolves.size() >= 12) ? calcularAO(12) : -1;
+
+  return stats;
+}
+
+void dibujarGraficaSesion(long tMin, long tMax) {
+  if (sessionSolves.size() < 2 || tMin >= tMax) return;
+
+  int gx = 65, gy = 30, gw = 235, gh = 120;
+
+  tft.drawRect(gx, gy, gw, gh, TFT_WHITE);
+
+  int prevX = -1;
+  int prevY = -1;
+  size_t total = sessionSolves.size();
+
+  // Número de puntos a dibujar: como máximo el ancho en píxeles
+  int numPuntos = (total < (size_t)gw) ? total : gw;
+
+  for (int i = 0; i < numPuntos; i++) {
+    size_t idx = (total < (size_t)gw) ? i : (i * (total - 1)) / (gw - 1);
+
+    long t = getTiempoEfectivo(sessionSolves[idx].tiempo, sessionSolves[idx].penalty);
+    if (t < 0) continue; // Saltar DNFs
+
+    int px = gx + (int)((i * (gw - 1)) / (numPuntos - 1));
+    int py = gy + gh - 1 - (int)(((t - tMin) * (gh - 1)) / (tMax - tMin));
+
+    if (prevX != -1) {
+      tft.drawLine(prevX, prevY, px, py, TFT_CYAN);
+    }
+    prevX = px;
+    prevY = py;
+  }
+}
+
 void drawStats() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
   tft.fillRect(201, 25, 59, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
+
+  SessionStats stats = calcularEstadisticasSesion();
+
+  if (stats.count == 0) {
+    tft.setTextSize(3);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawCentreString("Sin datos", 160, 110, 1);
+    return;
+  }
+
+  char buf[32];
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+
+  // Fila 1: Count y Best
+  snprintf(buf, sizeof(buf), "Solves: %u (DNF: %u)", stats.count, stats.dnfs);
+  tft.drawString(buf, 20, 160);
+
+  formatearTiempoAO(stats.bestSingle, buf, sizeof(buf));
+  tft.drawString("Best: " + String(buf), 190, 160);
+
+  // Fila 2: Media y Desviación
+  formatearTiempoAO(stats.media, buf, sizeof(buf));
+  tft.drawString("Media: " + String(buf), 20, 175);
+
+  snprintf(buf, sizeof(buf), "Desviacion: %.2fs", stats.desviacion);
+  tft.drawString(buf, 190, 175);
+
+  // Fila 3: Ao5 y Ao12 actuales
+  formatearTiempoAO(stats.currentAo5, buf, sizeof(buf));
+  tft.drawString("Ao5: " + String(buf), 20, 190);
+
+  formatearTiempoAO(stats.currentAo12, buf, sizeof(buf));
+  tft.drawString("Ao12: " + String(buf), 190, 190);
+
+  tft.drawFastHLine(1, 155, 320, TFT_WHITE);
+
+  // Dibujar la gráfica en el espacio inferior (270x130 píxeles)
+  if (stats.bestSingle != -1 && stats.worstSingle != -1 && stats.bestSingle != stats.worstSingle) {
+    // Etiquetas de escala Y
+    formatearTiempoAO(stats.worstSingle, buf, sizeof(buf));
+    tft.drawString(buf, 20, 30);
+    formatearTiempoAO(stats.bestSingle, buf, sizeof(buf));
+    tft.drawString(buf, 20, 142);
+
+    dibujarGraficaSesion(stats.bestSingle, stats.worstSingle);
+  }
+
+  int y = 50;
+  tft.setTextColor(TFT_CYAN);
+  tft.drawString("Solve", 20, y + 15);
+  tft.setTextColor(TFT_YELLOW);
+  tft.drawString("Best", 20, y + 30);
+  tft.setTextColor(TFT_RED);
+  tft.drawString("Ao5", 20, y + 45);
+  tft.setTextColor(TFT_GREEN);
+  tft.drawString("Ao12", 20, y + 60);
+  tft.setTextColor(TFT_WHITE);
 }
 
 void drawSettings() {
@@ -1229,7 +1369,7 @@ void mostrarTiempo(long ms) {
 }
 
 void imprimirAlgoritmo(const String& algoritmo) {
-  tft.fillRect(1, 26, 318, 137, TFT_BLACK);
+  tft.fillRect(1, 26, 318, 139, TFT_BLACK);
   tft.setTextFont(1);
   tft.setTextSize(2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
