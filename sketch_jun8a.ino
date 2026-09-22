@@ -9,6 +9,7 @@
 #include <deque>
 #include <vector>
 #include <algorithm>
+#include <functional>
 
 #include "ThreeScrambler.h"
 #include "TwoScrambler.h"
@@ -89,13 +90,19 @@ struct SolveRecord {
 struct SessionStats {
   uint32_t count = 0;
   uint32_t dnfs = 0;
-  int32_t  bestSingle = -1;
-  int32_t  worstSingle = -1;
-  int32_t  bestAo5 = -1;
-  int32_t  bestAo12 = -1;
-  int32_t  currentAo5 = -1;
-  int32_t  currentAo12 = -1;
-  int32_t  media = -1;
+  int32_t  bestSingle = -2;
+  int32_t  worstSingle = -2;
+  int32_t  bestAo5 = -2;
+  int32_t  bestAo12 = -2;
+  int32_t  bestAo50 = -2;
+  int32_t  bestAo100 = -2;
+  int32_t  bestAo1000 = -2;
+  int32_t  currentAo5 = -2;
+  int32_t  currentAo12 = -2;
+  int32_t  currentAo50 = -2;
+  int32_t  currentAo100 = -2;
+  int32_t  currentAo1000 = -2;
+  int32_t  media = -2;
   float    desviacion = 0.0f;
 };
 
@@ -163,6 +170,7 @@ bool popupSiNoVisible = false;
 int accionPendiente = -1;
 bool popupNumVisible = false;
 int parametroN = 0;
+int sessionGlobal = 0;
 
 inline bool puntoEnArea(int px, int py, int x, int y, int w, int h) {
   return (px >= x && px <= (x + w) && py >= y && py <= (y + h));
@@ -230,9 +238,17 @@ void loop() {
     }
 
     // Barra de pestañas superior
+    // Selector de cubos
     if (puntoEnArea(touchX, touchY, 0, 0, BUTTON_CUBE_W, BUTTON_H)) {
       ultimoToque = millis();
-      if (pantallaActual != 0) { pantallaActual = 0; drawCubes(); }
+      if (pantallaActual != 0) { 
+        pantallaActual = 0;
+        drawCubes();
+        sessionGlobal = 0;
+        paginaSolves = 0;
+        averagesShown = false;
+        mezclaShown = false;
+      }
     } 
     // Timer
     else if (puntoEnArea(touchX, touchY, 80, 0, BUTTON_W, BUTTON_H)) {
@@ -244,6 +260,9 @@ void loop() {
         imprimirAlgoritmo(mezcla);
         if (ultimaSolve.tiempo != 0) mostrarTiempo(getTiempoEfectivo(ultimaSolve.tiempo, ultimaSolve.penalty));
         else mostrarTiempo(0);
+        sessionGlobal = 0;
+        paginaCubos = 1;
+        paginaSolves = 0;
       }
     } 
     // Times
@@ -253,6 +272,8 @@ void loop() {
         pantallaActual = 2; drawTimes();
         averagesShown = false;
         mezclaShown = false;
+        sessionGlobal = 0;
+        paginaCubos = 1;
       }
     } 
     // Stats
@@ -262,6 +283,8 @@ void loop() {
         pantallaActual = 3; drawStats();
         averagesShown = false;
         mezclaShown = false;
+        paginaSolves = 0;
+        paginaCubos = 1;
       }
     }
     // Settings
@@ -271,6 +294,9 @@ void loop() {
         pantallaActual = 4; drawSettings();
         averagesShown = false;
         mezclaShown = false;
+        sessionGlobal = 0;
+        paginaCubos = 1;
+        paginaSolves = 0;
       }
     }
   }
@@ -530,6 +556,22 @@ void loop() {
       }
       break;
     case 3: // pestaña de stats
+      if (tocadoPantalla && estado == DETENIDO && (millis() - ultimoToque > DEBOUNCE_MS)) {
+        if (puntoEnArea(touchX, touchY, 1, 155, 158, 20)) {
+          ultimoToque = millis();
+          if (sessionGlobal != 0) {
+            sessionGlobal = 0;
+            drawStats();
+          }
+        }
+        else if (puntoEnArea(touchX, touchY, 161, 155, 158, 20)) {
+          ultimoToque = millis();
+          if (sessionGlobal != 1) {
+            sessionGlobal = 1;
+            drawStats();
+          }
+        }
+      }
       break;
     case 4: // ajustes
       break;
@@ -773,42 +815,21 @@ void drawPopupSolve() {
   tft.setTextSize(2);
 }
 
-void drawStatGraph() {
-  if (sessionSolves.size() < 2) return;
-
-  int graphX = 20, graphY = 30, graphW = 280, graphH = 120;
-
-  // 2. Encontrar mínimo y máximo para escalar el eje Y
-  long tMin = sessionSolves[0].tiempo;
-  long tMax = tMin;
-  for (SessionItem s : sessionSolves) {
-    long t = getTiempoEfectivo(s.tiempo, s.penalty);
-    if (t < tMin) tMin = t;
-    if (t > tMax) tMax = t;
-  }
-  if (tMin == tMax) tMax += 1000; // Evitar división por cero si todos los tiempos son idénticos
-
-  // Limpiar fondo del gráfico y dibujar ejes
-  tft.fillRect(graphX, graphY, graphW, graphH, TFT_BLACK);
-  tft.drawRect(graphX, graphY, graphW, graphH, TFT_WHITE);
-
-  // 3. Submuestreo o distribución horizontal:
-  // Si hay más tiempos que píxeles de ancho (GRAPH_W), se debe interpolar/avanzar a saltos.
-  // En este ejemplo simple, asumimos N puntos distribuidos uniformemente:
-  int prevPixelX = 0;
-  int prevPixelY = 0;
-
-  for (size_t i = 0; i < sessionSolves.size(); i++) {
-    int px = graphX + (int)((i * (graphW - 1)) / (sessionSolves.size() - 1));
-    int py = graphY + graphH - 1 - (int)(((sessionSolves[i].tiempo - tMin) * (graphH - 1)) / (tMax - tMin));
-
-    if (i > 0) {
-      tft.drawLine(prevPixelX, prevPixelY, px, py, TFT_GREEN);
+int32_t calcularAODeCola(const std::deque<long>& ventana, int n) {
+  if (ventana.size() < (size_t)n) return -1;
+  std::vector<long> v(ventana.begin(), ventana.end());
+  int dnfs = 0;
+  for (size_t i = 0; i < v.size(); i++) {
+    if (v[i] < 0) {
+      dnfs++;
+      v[i] = 2147483647;
     }
-
-    prevPixelX = px;
-    prevPixelY = py;
   }
+  if (dnfs > 1) return -1;
+  std::sort(v.begin(), v.end());
+  int64_t suma = 0;
+  for (int i = 1; i < n - 1; i++) suma += v[i];
+  return (int32_t)(suma / (n - 2));
 }
 
 SessionStats calcularEstadisticasSesion() {
@@ -819,65 +840,264 @@ SessionStats calcularEstadisticasSesion() {
   std::vector<long> validos;
   validos.reserve(sessionSolves.size());
 
+  std::deque<long> w5, w12, w50, w100, w1000;
+
   for (const auto& item : sessionSolves) {
     stats.count++;
     long t = getTiempoEfectivo(item.tiempo, item.penalty);
+
     if (t < 0) {
       stats.dnfs++;
     } else {
       validos.push_back(t);
       suma += t;
-      if (stats.bestSingle == -1 || t < stats.bestSingle) stats.bestSingle = t;
-      if (stats.worstSingle == -1 || t > stats.worstSingle) stats.worstSingle = t;
+      if (stats.bestSingle == -2 || t < stats.bestSingle) stats.bestSingle = t;
+      if (stats.worstSingle == -2 || t > stats.worstSingle) stats.worstSingle = t;
+    }
+
+    // Ao5
+    w5.push_back(t);
+    if (w5.size() > 5) w5.pop_front();
+    if (w5.size() == 5) {
+      int32_t val = calcularAODeCola(w5, 5);
+      if (val > 0 && (stats.bestAo5 == -2 || val < stats.bestAo5)) stats.bestAo5 = val;
+    }
+
+    // Ao12
+    w12.push_back(t);
+    if (w12.size() > 12) w12.pop_front();
+    if (w12.size() == 12) {
+      int32_t val = calcularAODeCola(w12, 12);
+      if (val > 0 && (stats.bestAo12 == -2 || val < stats.bestAo12)) stats.bestAo12 = val;
+    }
+
+    // Ao50
+    w50.push_back(t);
+    if (w50.size() > 50) w50.pop_front();
+    if (w50.size() == 50) {
+      int32_t val = calcularAODeCola(w50, 50);
+      if (val > 0 && (stats.bestAo50 == -2 || val < stats.bestAo50)) stats.bestAo50 = val;
+    }
+
+    // Ao100
+    w100.push_back(t);
+    if (w100.size() > 100) w100.pop_front();
+    if (w100.size() == 100) {
+      int32_t val = calcularAODeCola(w100, 100);
+      if (val > 0 && (stats.bestAo100 == -2 || val < stats.bestAo100)) stats.bestAo100 = val;
+    }
+
+    // Ao1000
+    w1000.push_back(t);
+    if (w1000.size() > 1000) w1000.pop_front();
+    if (w1000.size() == 1000) {
+      int32_t val = calcularAODeCola(w1000, 1000);
+      if (val > 0 && (stats.bestAo1000 == -2 || val < stats.bestAo1000)) stats.bestAo1000 = val;
     }
   }
 
   if (!validos.empty()) {
     stats.media = (int32_t)(suma / validos.size());
 
-    // Desviación estándar
     float sumaVarianza = 0.0f;
     for (long t : validos) {
       float diff = t - stats.media;
       sumaVarianza += diff * diff;
     }
-    stats.desviacion = std::sqrt(sumaVarianza / validos.size()) / 1000.0f; // en segundos
+    stats.desviacion = std::sqrt(sumaVarianza / validos.size()) / 1000.0f;
   }
 
-  stats.currentAo5  = (sessionSolves.size() >= 5)  ? calcularAO(5)  : -1;
-  stats.currentAo12 = (sessionSolves.size() >= 12) ? calcularAO(12) : -1;
+  stats.currentAo5    = (w5.size() >= 5)       ? calcularAODeCola(w5, 5)       : -2;
+  stats.currentAo12   = (w12.size() >= 12)     ? calcularAODeCola(w12, 12)     : -2;
+  stats.currentAo50   = (w50.size() >= 50)     ? calcularAODeCola(w50, 50)     : -2;
+  stats.currentAo100  = (w100.size() >= 100)   ? calcularAODeCola(w100, 100)   : -2;
+  stats.currentAo1000 = (w1000.size() >= 1000) ? calcularAODeCola(w1000, 1000) : -2;
 
   return stats;
 }
 
-void dibujarGraficaSesion(long tMin, long tMax) {
-  if (sessionSolves.size() < 2 || tMin >= tMax) return;
+SessionStats calcularEstadisticasGlobales() {
+  SessionStats stats;
+  if (!sdDisponible) return stats;
+
+  String pathDat = getCubePath(".dat");
+  File fileDat = SD.open(pathDat.c_str(), FILE_READ);
+  if (!fileDat) return stats;
+
+  size_t totalRecords = fileDat.size() / sizeof(SolveRecord);
+  if (totalRecords == 0) {
+    fileDat.close();
+    return stats;
+  }
+
+  SolveRecord bloque[BUFFER_RECORDS];
+  int64_t suma = 0;
+  uint32_t validos = 0;
+
+  std::deque<long> w5, w12, w50, w100, w1000;
+
+  for (size_t i = 0; i < totalRecords; i += BUFFER_RECORDS) {
+    size_t aLeer = std::min((size_t)BUFFER_RECORDS, totalRecords - i);
+    fileDat.read((uint8_t*)bloque, aLeer * sizeof(SolveRecord));
+
+    for (size_t j = 0; j < aLeer; j++) {
+      if (bloque[j].archivado == 2) continue; // Descartar borradas
+
+      stats.count++;
+      long t = getTiempoEfectivo(bloque[j].tiempo, bloque[j].penalty);
+
+      if (t < 0) {
+        stats.dnfs++;
+      } else {
+        suma += t;
+        validos++;
+        if (stats.bestSingle == -2 || t < stats.bestSingle) stats.bestSingle = t;
+        if (stats.worstSingle == -2 || t > stats.worstSingle) stats.worstSingle = t;
+      }
+
+      // Ao5
+      w5.push_back(t);
+      if (w5.size() > 5) w5.pop_front();
+      if (w5.size() == 5) {
+        int32_t val = calcularAODeCola(w5, 5);
+        if (val > 0 && (stats.bestAo5 == -2 || val < stats.bestAo5)) stats.bestAo5 = val;
+      }
+
+      // Ao12
+      w12.push_back(t);
+      if (w12.size() > 12) w12.pop_front();
+      if (w12.size() == 12) {
+        int32_t val = calcularAODeCola(w12, 12);
+        if (val > 0 && (stats.bestAo12 == -2 || val < stats.bestAo12)) stats.bestAo12 = val;
+      }
+
+      // Ao50
+      w50.push_back(t);
+      if (w50.size() > 50) w50.pop_front();
+      if (w50.size() == 50) {
+        int32_t val = calcularAODeCola(w50, 50);
+        if (val > 0 && (stats.bestAo50 == -2 || val < stats.bestAo50)) stats.bestAo50 = val;
+      }
+
+      // Ao100
+      w100.push_back(t);
+      if (w100.size() > 100) w100.pop_front();
+      if (w100.size() == 100) {
+        int32_t val = calcularAODeCola(w100, 100);
+        if (val > 0 && (stats.bestAo100 == -2 || val < stats.bestAo100)) stats.bestAo100 = val;
+      }
+
+      // Ao1000
+      w1000.push_back(t);
+      if (w1000.size() > 1000) w1000.pop_front();
+      if (w1000.size() == 1000) {
+        int32_t val = calcularAODeCola(w1000, 1000);
+        if (val > 0 && (stats.bestAo1000 == -2 || val < stats.bestAo1000)) stats.bestAo1000 = val;
+      }
+    }
+  }
+
+  if (validos > 0) {
+    stats.media = (int32_t)(suma / validos);
+
+    fileDat.seek(0);
+    double sumaVarianza = 0.0;
+    for (size_t i = 0; i < totalRecords; i += BUFFER_RECORDS) {
+      size_t aLeer = std::min((size_t)BUFFER_RECORDS, totalRecords - i);
+      fileDat.read((uint8_t*)bloque, aLeer * sizeof(SolveRecord));
+
+      for (size_t j = 0; j < aLeer; j++) {
+        if (bloque[j].archivado == 2) continue;
+        long t = getTiempoEfectivo(bloque[j].tiempo, bloque[j].penalty);
+        if (t >= 0) {
+          double diff = t - stats.media;
+          sumaVarianza += diff * diff;
+        }
+      }
+    }
+    stats.desviacion = std::sqrt(sumaVarianza / validos) / 1000.0f;
+  }
+
+  fileDat.close();
+
+  stats.currentAo5    = (w5.size() >= 5)       ? calcularAODeCola(w5, 5)       : -2;
+  stats.currentAo12   = (w12.size() >= 12)     ? calcularAODeCola(w12, 12)     : -2;
+  stats.currentAo50   = (w50.size() >= 50)     ? calcularAODeCola(w50, 50)     : -2;
+  stats.currentAo100  = (w100.size() >= 100)   ? calcularAODeCola(w100, 100)   : -2;
+  stats.currentAo1000 = (w1000.size() >= 1000) ? calcularAODeCola(w1000, 1000) : -2;
+
+  return stats;
+}
+
+void dibujarGrafica(size_t total, std::function<SessionItem(size_t)> obtenerItem, long tMin, long tMax) {
+  if (total < 2 || tMin >= tMax) return;
 
   int gx = 65, gy = 30, gw = 235, gh = 120;
 
-  tft.drawRect(gx, gy, gw, gh, TFT_WHITE);
-
-  int prevX = -1;
-  int prevY = -1;
-  size_t total = sessionSolves.size();
-
-  // Número de puntos a dibujar: como máximo el ancho en píxeles
   int numPuntos = (total < (size_t)gw) ? total : gw;
 
-  for (int i = 0; i < numPuntos; i++) {
-    size_t idx = (total < (size_t)gw) ? i : (i * (total - 1)) / (gw - 1);
+  int prevX = -1, prevY = -1;
+  long pr = -1;
+  int prPrevX = -1, prPrevY = -1;
 
-    long t = getTiempoEfectivo(sessionSolves[idx].tiempo, sessionSolves[idx].penalty);
-    if (t < 0) continue; // Saltar DNFs
+  int ao5PrevX = -1, ao5PrevY = -1;
+  int ao12PrevX = -1, ao12PrevY = -1;
+
+  std::deque<long> wAo5;
+  std::deque<long> wAo12;
+  size_t lastIdx = 0;
+
+  for (int i = 0; i < numPuntos; i++) {
+    size_t targetIdx = (total < (size_t)gw) ? i : (i * (total - 1)) / (gw - 1);
+
+    while (lastIdx <= targetIdx) {
+      SessionItem item = obtenerItem(lastIdx);
+      long tRaw = getTiempoEfectivo(item.tiempo, item.penalty);
+      wAo5.push_back(tRaw);
+      if (wAo5.size() > 5) wAo5.pop_front();
+      wAo12.push_back(tRaw);
+      if (wAo12.size() > 12) wAo12.pop_front();
+      lastIdx++;
+    }
 
     int px = gx + (int)((i * (gw - 1)) / (numPuntos - 1));
-    int py = gy + gh - 1 - (int)(((t - tMin) * (gh - 1)) / (tMax - tMin));
 
-    if (prevX != -1) {
-      tft.drawLine(prevX, prevY, px, py, TFT_CYAN);
+    SessionItem targetItem = obtenerItem(targetIdx);
+    long t = getTiempoEfectivo(targetItem.tiempo, targetItem.penalty);
+    if (t >= 0) {
+      int py = gy + gh - 1 - (int)(((t - tMin) * (gh - 1)) / (tMax - tMin));
+      if (prevX != -1) tft.drawLine(prevX, prevY, px, py, TFT_CYAN);
+      prevX = px;
+      prevY = py;
+
+      if (t < pr || pr == -1) {
+        tft.fillCircle(px, py, 2, TFT_YELLOW);
+        if (pr != -1) tft.drawLine(prPrevX, prPrevY, px, py, TFT_YELLOW);
+        prPrevX = px;
+        prPrevY = py;
+        pr = t;
+      }
     }
-    prevX = px;
-    prevY = py;
+
+    int32_t valAo5 = calcularAODeCola(wAo5, 5);
+    if (valAo5 >= 0 && valAo5 >= tMin && valAo5 <= tMax) {
+      int pyAo5 = gy + gh - 1 - (int)(((valAo5 - tMin) * (gh - 1)) / (tMax - tMin));
+      if (ao5PrevX != -1) tft.drawLine(ao5PrevX, ao5PrevY, px, pyAo5, TFT_RED);
+      ao5PrevX = px;
+      ao5PrevY = pyAo5;
+    } else {
+      ao5PrevX = -1;
+    }
+
+    int32_t valAo12 = calcularAODeCola(wAo12, 12);
+    if (valAo12 >= 0 && valAo12 >= tMin && valAo12 <= tMax) {
+      int pyAo12 = gy + gh - 1 - (int)(((valAo12 - tMin) * (gh - 1)) / (tMax - tMin));
+      if (ao12PrevX != -1) tft.drawLine(ao12PrevX, ao12PrevY, px, pyAo12, TFT_GREEN);
+      ao12PrevX = px;
+      ao12PrevY = pyAo12;
+    } else {
+      ao12PrevX = -1;
+    }
   }
 }
 
@@ -885,56 +1105,23 @@ void drawStats() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
   tft.fillRect(201, 25, 59, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
-
-  SessionStats stats = calcularEstadisticasSesion();
-
-  if (stats.count == 0) {
-    tft.setTextSize(3);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawCentreString("Sin datos", 160, 110, 1);
-    return;
-  }
-
-  char buf[32];
-  tft.setTextFont(1);
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-
-  // Fila 1: Count y Best
-  snprintf(buf, sizeof(buf), "Solves: %u (DNF: %u)", stats.count, stats.dnfs);
-  tft.drawString(buf, 20, 160);
-
-  formatearTiempoAO(stats.bestSingle, buf, sizeof(buf));
-  tft.drawString("Best: " + String(buf), 190, 160);
-
-  // Fila 2: Media y Desviación
-  formatearTiempoAO(stats.media, buf, sizeof(buf));
-  tft.drawString("Media: " + String(buf), 20, 175);
-
-  snprintf(buf, sizeof(buf), "Desviacion: %.2fs", stats.desviacion);
-  tft.drawString(buf, 190, 175);
-
-  // Fila 3: Ao5 y Ao12 actuales
-  formatearTiempoAO(stats.currentAo5, buf, sizeof(buf));
-  tft.drawString("Ao5: " + String(buf), 20, 190);
-
-  formatearTiempoAO(stats.currentAo12, buf, sizeof(buf));
-  tft.drawString("Ao12: " + String(buf), 190, 190);
-
   tft.drawFastHLine(1, 155, 320, TFT_WHITE);
+  tft.drawFastHLine(1, 175, 320, TFT_WHITE);
+  tft.drawFastVLine(160, 155, 20, TFT_WHITE);
+  tft.drawRect(62, 27, 241, 126, TFT_WHITE);
 
-  // Dibujar la gráfica en el espacio inferior (270x130 píxeles)
-  if (stats.bestSingle != -1 && stats.worstSingle != -1 && stats.bestSingle != stats.worstSingle) {
-    // Etiquetas de escala Y
-    formatearTiempoAO(stats.worstSingle, buf, sizeof(buf));
-    tft.drawString(buf, 20, 30);
-    formatearTiempoAO(stats.bestSingle, buf, sizeof(buf));
-    tft.drawString(buf, 20, 142);
-
-    dibujarGraficaSesion(stats.bestSingle, stats.worstSingle);
+  SessionStats stats;
+  if (sessionGlobal == 0) {
+    stats = calcularEstadisticasSesion();
+  } else {
+    stats = calcularEstadisticasGlobales();
   }
+
+  if (sessionGlobal == 0) tft.drawFastHLine(1, 175, 159, TFT_BLACK);
+  else tft.drawFastHLine(161, 175, 158, TFT_BLACK);
 
   int y = 50;
+  tft.setTextSize(1);
   tft.setTextColor(TFT_CYAN);
   tft.drawString("Solve", 20, y + 15);
   tft.setTextColor(TFT_YELLOW);
@@ -944,6 +1131,135 @@ void drawStats() {
   tft.setTextColor(TFT_GREEN);
   tft.drawString("Ao12", 20, y + 60);
   tft.setTextColor(TFT_WHITE);
+
+  tft.drawCentreString("mejor sesion", 80, 161, 1);
+  tft.drawCentreString("mejor global", 240, 161, 1);
+
+  if (stats.count == 0 || stats.count == 1) {
+    tft.setTextSize(3);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawCentreString("Sin datos", 182, 80, 1);
+    tft.setTextSize(2);
+    tft.drawCentreString("Sin datos", 160, 200, 1);
+    tft.setTextSize(1);
+    tft.drawString("--", 20, 30);
+    tft.drawString("--", 20, 142);
+    return;
+  }
+
+  char buf[32];
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(1);
+
+  // Fila 1: ao5 y ao1000
+  formatearTiempoAO(stats.bestAo5, buf, sizeof(buf));
+  tft.drawString("Ao5:    " + String(buf), 5, 180);
+
+  formatearTiempoAO(stats.bestAo1000, buf, sizeof(buf));
+  tft.drawString("Ao1000:      " + String(buf), 165, 180);
+
+  // Fila 2: ao12 y cuenta
+  formatearTiempoAO(stats.bestAo12, buf, sizeof(buf));
+  tft.drawString("Ao12:   " + String(buf), 5, 195);
+
+  snprintf(buf, sizeof(buf), "Cuenta:      %u", stats.count);
+  tft.drawString(buf, 165, 195);
+
+  // Fila 3: ao50 y media
+  formatearTiempoAO(stats.bestAo50, buf, sizeof(buf));
+  tft.drawString("Ao50:   " + String(buf), 5, 210);
+
+  formatearTiempoAO(stats.media, buf, sizeof(buf));
+  tft.drawString("Media:       " + String(buf), 165, 210);
+
+  // Fila 4: ao100 y desviación
+  formatearTiempoAO(stats.bestAo100, buf, sizeof(buf));
+  tft.drawString("Ao100:  " + String(buf), 5, 225);
+
+  snprintf(buf, sizeof(buf), "Desviacion:  %.2fs", stats.desviacion);
+  tft.drawString(buf, 165, 225);
+
+  if (stats.bestSingle != -1 && stats.worstSingle != -1 && stats.bestSingle != stats.worstSingle) {
+    formatearTiempoAO(stats.worstSingle, buf, sizeof(buf));
+    tft.drawString(buf, 20, 30);
+    formatearTiempoAO(stats.bestSingle, buf, sizeof(buf));
+    tft.drawString(buf, 20, 142);
+
+    if (sessionGlobal == 0) {
+      dibujarGrafica(
+        sessionSolves.size(),
+        [](size_t idx) -> SessionItem { return sessionSolves[idx]; },
+        stats.bestSingle,
+        stats.worstSingle
+      );
+    } else {
+      String pathDat = getCubePath(".dat");
+      File f = SD.open(pathDat.c_str(), FILE_READ);
+      if (f && stats.count >= 2) {
+        size_t totalRecords = f.size() / sizeof(SolveRecord);
+
+        // Búfer de salida con solves válidas
+        SessionItem bufferValidos[BUFFER_RECORDS];
+        size_t bufferStartIdx = 0;
+        size_t bufferCount = 0;
+
+        // Búfer intermedio para lecturas eficientes de SD en bloques de 64
+        SolveRecord bloqueSD[BUFFER_RECORDS];
+        size_t fileRecordIdx = 0; // Índice global en el archivo
+        size_t sdBufPos = 0;      // Cursor dentro del bloqueSD actual
+        size_t sdBufLen = 0;      // Cuántos registros válidos se leyeron en bloqueSD
+
+        dibujarGrafica(
+          stats.count,
+          [&](size_t targetIdx) -> SessionItem {
+            // Si el índice solicitado está fuera del bloque actual de válidos, cargar el siguiente
+            while (targetIdx >= bufferStartIdx + bufferCount && (fileRecordIdx < totalRecords || sdBufPos < sdBufLen)) {
+              bufferStartIdx += bufferCount;
+              bufferCount = 0;
+
+              // Llenar bufferValidos hasta que se complete (64) o se termine el archivo
+              while (bufferCount < BUFFER_RECORDS && (fileRecordIdx < totalRecords || sdBufPos < sdBufLen)) {
+                // Si consumimos el bloqueSD de la SD, leemos el siguiente tramo físico
+                if (sdBufPos >= sdBufLen) {
+                  size_t aLeer = std::min((size_t)BUFFER_RECORDS, totalRecords - fileRecordIdx);
+                  if (aLeer == 0) break;
+                  f.seek(fileRecordIdx * sizeof(SolveRecord));
+                  f.read((uint8_t*)bloqueSD, aLeer * sizeof(SolveRecord));
+                  sdBufLen = aLeer;
+                  sdBufPos = 0;
+                }
+
+                // Procesar elemento a elemento sin saltar nada
+                if (bloqueSD[sdBufPos].archivado != 2) {
+                  bufferValidos[bufferCount++] = {
+                    bloqueSD[sdBufPos].tiempo,
+                    bloqueSD[sdBufPos].penalty,
+                    (uint32_t)(fileRecordIdx + sdBufPos)
+                  };
+                }
+
+                sdBufPos++;
+                if (sdBufPos >= sdBufLen) {
+                  fileRecordIdx += sdBufLen;
+                }
+              }
+            }
+
+            if (targetIdx >= bufferStartIdx && targetIdx < bufferStartIdx + bufferCount) {
+              return bufferValidos[targetIdx - bufferStartIdx];
+            }
+
+            return { -1, 2, 0 };
+          },
+          stats.bestSingle,
+          stats.worstSingle
+        );
+        f.close();
+      }
+    }
+  }
+
+  tft.setTextSize(2);
 }
 
 void drawSettings() {
@@ -1237,7 +1553,7 @@ bool procesarToquePopupSiNo(uint16_t touchX, uint16_t touchY) {
     return true;
   }
 
-  return true; // Si está visible pero se pulsa fuera, bloquea otros toques
+  return true;
 }
 
 void abrirPopupNum() {
