@@ -203,15 +203,16 @@ void setup() {
   tft.setSwapBytes(true);
 
   sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-  sdDisponible = SD.begin(SD_CS, sdSPI);
+  sdDisponible = SD.begin(SD_CS, sdSPI, 25000000);
 
   tft.fillScreen(TFT_BLACK);
   std::srand(esp_random());
 
-  drawBasic();
-  drawTimer();
   loadSession();
   mezcla = generarMezcla();
+
+  drawBasic();
+  drawTimer();
   imprimirAlgoritmo(mezcla);
   //for (int i = 0; i < 30; i++) {
   //  ultimaMezcla = generarMezcla();
