@@ -578,7 +578,6 @@ void loop() {
   }
 
   // Lectura del sensor para el Timer
-  // TODO rehacer para cuando tenga el sensor -> digitalRead();
   bool tocadoSensor = (digitalRead(SENSOR_PIN) == HIGH) && pantallaActual == 1;
 
   switch (estado) {
@@ -1888,7 +1887,7 @@ void modificarSesion(int type) {
     case ARCHIVAR_SESION:
       estado = 1;
       break;
-    case ELIMINAR_SESION:
+    case ELIMINAR_SESION: //TODO reimplementar este método para limpiar los archivos cuando se eliminen bloques grandes de solves.
       estado = 2;
       break;
   }
