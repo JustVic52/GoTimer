@@ -64,7 +64,7 @@
 TFT_eSPI tft = TFT_eSPI();
 SPIClass sdSPI(HSPI);
 
-enum EstadoTimer { DETENIDO, ESPERANDO, PREPARADO, CORRIENDO };
+enum EstadoTimer { DETENIDO, ESPERANDO, PREPARADO, CORRIENDO, INSPECCION };
 EstadoTimer estado = DETENIDO;
 
 typedef std::string (*ScrambleFunc)();
@@ -118,6 +118,12 @@ struct SessionItem {
   uint32_t indexSD;
 };
 
+struct SettingsData {
+  uint8_t inspection;
+  uint8_t hideTime;
+  int32_t cuboActual;
+};
+
 // Generadores específicos con parámetros adaptados a la firma ScrambleFunc
 std::string getScramble6x6() { return SixSevenScrambler::scramble(80); }
 std::string getScramble7x7() { return SixSevenScrambler::scramble(100); }
@@ -150,6 +156,9 @@ int cuboActual = 1; // Índice por defecto (3x3)
 unsigned long tiempoMano = 0;
 unsigned long tiempoInicio = 0;
 unsigned long tiempoTranscurrido = 0;
+unsigned long tiempoInicioInspeccion = 0;
+uint8_t penaltyInspeccion = 0;
+int ultimoSegundoPintado = -99;
 unsigned long ultimoToque = 0;
 unsigned long debounceFinTimer = 0;
 
@@ -171,6 +180,8 @@ int accionPendiente = -1;
 bool popupNumVisible = false;
 int parametroN = 0;
 int sessionGlobal = 0;
+bool inspection = false;
+bool hideTime = false;
 
 inline bool puntoEnArea(int px, int py, int x, int y, int w, int h) {
   return (px >= x && px <= (x + w) && py >= y && py <= (y + h));
@@ -208,6 +219,7 @@ void setup() {
   tft.fillScreen(TFT_BLACK);
   std::srand(esp_random());
 
+  loadSettings();
   loadSession();
   mezcla = generarMezcla();
 
@@ -225,6 +237,7 @@ void setup() {
 void loop() {
   uint16_t touchX = 0, touchY = 0;
   bool tocadoPantalla = tft.getTouch(&touchX, &touchY);
+  long tiempoEnPantalla = (ultimaSolve.tiempo != 0) ? getTiempoEfectivo(ultimaSolve.tiempo, ultimaSolve.penalty) : 0;
 
   if (tocadoPantalla && estado == DETENIDO && (millis() - ultimoToque > DEBOUNCE_MS)) {
 
@@ -315,7 +328,9 @@ void loop() {
         for (size_t i = 0; i < TOTAL_CUBOS; i++) {
           if (CUBOS[i].page == paginaCubos && puntoEnArea(touchX, touchY, CUBOS[i].x, CUBOS[i].y, bigIconW, bigIconH)) {
             ultimoToque = millis();
+            compactarArchivosCubo();
             cuboActual = i;
+            saveSettings();
             pantallaActual = 1;
             paginaCubos = 1;
             drawTimer();
@@ -330,7 +345,17 @@ void loop() {
       break;
 
     case 1: // Cronómetro
+      if (tocadoPantalla && estado == INSPECCION && (millis() - ultimoToque > DEBOUNCE_MS)) {
+        ultimoToque = millis();
+        estado = DETENIDO;
+        debounceFinTimer = millis() + 300;
+        imprimirAlgoritmo(mezcla); // Restaura la mezcla en el área central
+        mostrarTiempo(tiempoEnPantalla); // Restaura el tiempo en blanco
+        break;
+      }
+
       if (tocadoPantalla && estado == DETENIDO && (millis() - ultimoToque > DEBOUNCE_MS)) {
+        
         bool esGrande = (cuboActual >= 4 && cuboActual <= 5) || cuboActual == 10; // 6x6, 7x7, megaminx
 
         // Cambio de página en mezclas largas
@@ -373,14 +398,14 @@ void loop() {
         // Eliminar última solve
         else if (puntoEnArea(touchX, touchY, 75, 205, iconW, iconH)) {
           ultimoToque = millis();
-          if (!sessionSolves.empty() && tiempoTranscurrido != 0) {
+          if (!sessionSolves.empty() && (tiempoTranscurrido != 0 || ultimaSolve.longMezcla > 0)) {
             abrirPopupSiNo(ELIMINAR_TIEMPO, 0);
           }
         }
         // Rehacer última mezcla
         else if (puntoEnArea(touchX, touchY, 112, 205, iconW, iconH)) {
           ultimoToque = millis();
-          if (ultimaMezcla != "" && tiempoTranscurrido != 0) {
+          if (ultimaMezcla != "" && (tiempoTranscurrido != 0 || ultimaSolve.longMezcla > 0)) {
             if (averagesShown) {
             tft.fillRect(100, 75, 219, 90, TFT_BLACK);
             tft.drawFastVLine(245, 165, 60, TFT_BLACK);
@@ -399,7 +424,7 @@ void loop() {
         // DNF
         else if (puntoEnArea(touchX, touchY, 150, 206, iconW, iconH)) {
           ultimoToque = millis();
-          if (tiempoTranscurrido > 0) {
+          if (tiempoTranscurrido > 0 || ultimaSolve.longMezcla > 0) {
             uint8_t nuevaPen = (ultimaSolve.penalty == 2) ? 0 : 2;
             actualizarRegistro(nuevaPen);
             mostrarTiempo(getTiempoEfectivo(ultimaSolve.tiempo, ultimaSolve.penalty));
@@ -408,7 +433,7 @@ void loop() {
         // +2 segundos
         else if (puntoEnArea(touchX, touchY, 186, 205, iconW, iconH)) {
           ultimoToque = millis();
-          if (tiempoTranscurrido > 0) {
+          if (tiempoTranscurrido > 0 || ultimaSolve.longMezcla > 0) {
             uint8_t nuevaPen = (ultimaSolve.penalty == 1) ? 0 : 1;
             actualizarRegistro(nuevaPen);
             mostrarTiempo(getTiempoEfectivo(ultimaSolve.tiempo, ultimaSolve.penalty));
@@ -575,6 +600,26 @@ void loop() {
       }
       break;
     case 4: // ajustes
+      if (tocadoPantalla && estado == DETENIDO && (millis() - ultimoToque > DEBOUNCE_MS)) {
+        if (puntoEnArea(touchX, touchY, 285, 30, 25, 25)) {
+          ultimoToque = millis();
+          if (inspection) {
+            tft.fillRect(285, 30, 25, 25, TFT_BLACK);
+            tft.drawRect(285, 30, 25, 25, TFT_WHITE);
+          } else tft.fillRect(285, 30, 25, 25, TFT_WHITE);
+          inspection = !inspection;
+          saveSettings();
+        }
+        else if (puntoEnArea(touchX, touchY, 285, 65, 25, 25)) {
+          ultimoToque = millis();
+          if (hideTime) {
+            tft.fillRect(285, 65, 25, 25, TFT_BLACK);
+            tft.drawRect(285, 65, 25, 25, TFT_WHITE);
+          } else tft.fillRect(285, 65, 25, 25, TFT_WHITE);
+          hideTime = !hideTime;
+          saveSettings();
+        }
+      }
       break;
   }
 
@@ -584,26 +629,66 @@ void loop() {
   switch (estado) {
     case DETENIDO:
       if (tocadoSensor && (millis() > debounceFinTimer)) {
-        tiempoMano = millis();
-        tft.fillCircle(245, 177, 10, TFT_RED);
-        estado = ESPERANDO;
+        if (inspection) {
+          estado = INSPECCION;
+          tiempoInicioInspeccion = millis();
+          penaltyInspeccion = 0;
+          ultimoSegundoPintado = -99;
+          drawInspection(0);
+          debounceFinTimer = millis() + 300;
+        } else {
+          tiempoMano = millis();
+          estado = ESPERANDO;
+          mostrarTiempo(tiempoEnPantalla); // Rojo
+        }
       }
       break;
 
+    case INSPECCION: {
+      unsigned long tInsp = millis() - tiempoInicioInspeccion;
+
+      if (tInsp >= 17000) {
+        estado = DETENIDO;
+        debounceFinTimer = millis() + 500;
+
+        ultimaMezcla = mezcla;
+        mezcla = generarMezcla();
+        imprimirAlgoritmo(mezcla);
+
+        registrarTiempo(0);
+        actualizarRegistro(2); // DNF
+        mostrarTiempo(-1);
+        break;
+      }
+
+      if (tInsp >= 15000) {
+        penaltyInspeccion = 1;
+      }
+
+      drawInspection(tInsp);
+
+      if (tocadoSensor && (millis() > debounceFinTimer)) {
+        tiempoMano = millis();
+        estado = ESPERANDO;
+        mostrarTiempo(tiempoEnPantalla);
+      }
+      break;
+    }
+
     case ESPERANDO:
       if (!tocadoSensor) {
-        tft.fillCircle(245, 177, 10, TFT_BLACK);
-        estado = DETENIDO;
+        estado = inspection ? INSPECCION : DETENIDO;
+        mostrarTiempo(tiempoEnPantalla); // Blanco
       } else if (millis() - tiempoMano >= 500) {
-        tft.fillCircle(245, 177, 10, TFT_GREEN);
         estado = PREPARADO;
+        mostrarTiempo(tiempoEnPantalla); // Verde
       }
       break;
 
     case PREPARADO:
       if (!tocadoSensor) {
         tiempoInicio = millis();
-        tft.fillCircle(245, 177, 10, TFT_BLACK);
+        if (inspection) imprimirAlgoritmo(mezcla);
         estado = CORRIENDO;
       }
       break;
@@ -612,15 +697,27 @@ void loop() {
       tiempoTranscurrido = millis() - tiempoInicio;
       mostrarTiempo(tiempoTranscurrido);
 
-      if (tocadoSensor && (tiempoTranscurrido > 200)) {
+      if ((tocadoSensor || tocadoPantalla) && (tiempoTranscurrido > 200)) {
+        ultimoToque = millis();
         estado = DETENIDO;
         debounceFinTimer = millis() + 500;
 
         ultimaMezcla = mezcla;
         mezcla = generarMezcla();
         imprimirAlgoritmo(mezcla);
-        registrarTiempo(tiempoTranscurrido);
-        mostrarTiempo(tiempoTranscurrido);
+
+        if (tocadoPantalla) {
+          tiempoTranscurrido = 0;
+          mostrarTiempo(tiempoTranscurrido);
+        }
+        else {
+          registrarTiempo(tiempoTranscurrido);
+          if (inspection && penaltyInspeccion == 1) {
+            actualizarRegistro(1);
+          }
+
+          mostrarTiempo(getTiempoEfectivo(ultimaSolve.tiempo, ultimaSolve.penalty));
+        }
       }
       break;
   }
@@ -1266,6 +1363,71 @@ void drawSettings() {
   tft.drawFastHLine(0, 25, 320, TFT_WHITE);
   tft.fillRect(261, 25, 58, 5, TFT_BLACK);
   tft.fillRect(1, 26, 318, 213, TFT_BLACK);
+  
+  tft.setTextSize(2);
+
+  //inspección
+  tft.drawString("Habilitar inspeccion", 5, 40);
+  if (!inspection) {
+    tft.fillRect(285, 30, 25, 25, TFT_BLACK);
+    tft.drawRect(285, 30, 25, 25, TFT_WHITE);
+  } else tft.fillRect(285, 30, 25, 25, TFT_WHITE);
+  tft.drawFastHLine(1, 60, 320, TFT_WHITE);
+
+  //esconder tiempo
+  tft.drawString("Esconder tiempo", 5, 75);
+  if (!hideTime) {
+    tft.fillRect(285, 65, 25, 25, TFT_BLACK);
+    tft.drawRect(285, 65, 25, 25, TFT_WHITE);
+  } else tft.fillRect(285, 65, 25, 25, TFT_WHITE);
+  tft.drawFastHLine(1, 95, 320, TFT_WHITE);
+}
+
+void loadSettings() {
+  if (!sdDisponible) return;
+
+  const char* path = "/settings.dat";
+
+  if (!SD.exists(path)) {
+    saveSettings();
+    return;
+  }
+
+  File file = SD.open(path, FILE_READ);
+  if (!file) return;
+
+  if (file.size() < sizeof(SettingsData)) {
+    file.close();
+    saveSettings();
+    return;
+  }
+
+  SettingsData data;
+  if (file.read((uint8_t*)&data, sizeof(SettingsData)) == sizeof(SettingsData)) {
+    inspection = (data.inspection == 1);
+    hideTime   = (data.hideTime == 1);
+    if (data.cuboActual >= 0 && (size_t)data.cuboActual < TOTAL_CUBOS) {
+      cuboActual = data.cuboActual;
+    }
+  }
+  file.close();
+}
+
+void saveSettings() {
+  if (!sdDisponible) return;
+
+  const char* path = "/settings.dat";
+
+  File file = SD.open(path, FILE_WRITE);
+  if (!file) return;
+
+  SettingsData data = {
+    (uint8_t)(inspection ? 1 : 0),
+    (uint8_t)(hideTime ? 1 : 0),
+    (int32_t)cuboActual
+  };
+  file.write((const uint8_t*)&data, sizeof(SettingsData));
+  file.close();
 }
 
 void drawTimer() {
@@ -1661,14 +1823,36 @@ String generarMezcla() {
 }
 
 void mostrarTiempo(long ms) {
-  tft.fillRect(75, 175, 150, 25, TFT_BLACK);
+  static bool puntosPintados = false;
+
   tft.setTextSize(3);
+
+  if (hideTime && estado == CORRIENDO) {
+    if (!puntosPintados) {
+      tft.fillRect(75, 175, 150, 25, TFT_BLACK);
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      tft.drawCentreString("...", 158, 175, 1);
+      puntosPintados = true;
+    }
+    tft.setTextSize(2);
+    return;
+  }
+  puntosPintados = false;
+
+  tft.fillRect(75, 175, 150, 25, TFT_BLACK);
 
   if (ms < 0) {
     tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.drawCentreString("DNF", 158, 175, 1);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
   } else {
+    if (estado == ESPERANDO) {
+      tft.setTextColor(TFT_RED, TFT_BLACK);
+    } else if (estado == PREPARADO) {
+      tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    } else {
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    }
+
     unsigned long minutos = ms / 60000;
     unsigned long segundos = (ms % 60000) / 1000;
     unsigned long centesimas = (ms % 1000) / 10;
@@ -1681,7 +1865,52 @@ void mostrarTiempo(long ms) {
     }
     tft.drawCentreString(buffer, 158, 175, 1);
   }
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(2);
+}
+
+void drawInspection(unsigned long transcurrido) {
+  if (averagesShown) {
+    tft.fillRect(100, 75, 219, 90, TFT_BLACK);
+    tft.drawFastVLine(245, 165, 60, TFT_BLACK);
+    tft.drawFastHLine(0, 165, 320, TFT_WHITE);
+    averagesShown = false;
+  }
+  if (mezclaShown) {
+    tft.fillRect(1, 50, 220, 115, TFT_BLACK);
+    tft.drawFastVLine(75, 165, 60, TFT_BLACK);
+    tft.drawFastHLine(0, 165, 320, TFT_WHITE);
+    mezclaShown = false;
+  }
+  int segundosRestantes = 15 - (int)(transcurrido / 1000);
+  int estadoVisual = (transcurrido >= 15000) ? 99 : segundosRestantes;
+
+  if (estadoVisual == ultimoSegundoPintado) return;
+  ultimoSegundoPintado = estadoVisual;
+
+  tft.fillRect(1, 26, 318, 139, TFT_BLACK);
+  tft.setTextFont(1);
+  tft.setTextSize(6);
+
+  if (transcurrido < 8000) {
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  } else if (transcurrido < 12000) {
+    tft.setTextColor(TFT_ORANGE, TFT_BLACK); // Ámbar a los 8s
+  } else {
+    tft.setTextColor(TFT_RED, TFT_BLACK);    // Rojo a los 12s
+  }
+
+  char buf[8];
+  if (transcurrido < 15000) {
+    snprintf(buf, sizeof(buf), "%d", segundosRestantes);
+    tft.drawCentreString(buf, 160, 70, 1);
+  } else {
+    tft.drawCentreString("+2", 160, 70, 1);
+  }
+
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
 }
 
 void imprimirAlgoritmo(const String& algoritmo) {
@@ -1898,6 +2127,11 @@ void modificarSesion(int type) {
     fileDat.write((const uint8_t*)&estado, sizeof(uint8_t));
   }
   fileDat.close();
+
+  if (type == ELIMINAR_SESION) {
+    compactarArchivosCubo();
+  }
+  
   sessionSolves.clear();
   ultimaSolve = {};
   paginaSolves = 0;
@@ -1974,4 +2208,102 @@ void loadSession() {
     }
   }
   file.close();
+}
+
+void compactarArchivosCubo() {
+  if (!sdDisponible) return;
+
+  String pathDat = getCubePath(".dat");
+  String pathTxt = getCubePath(".txt");
+  String pathDatTmp = getCubePath(".dtt");
+  String pathTxtTmp = getCubePath(".ttt");
+
+  File fDat = SD.open(pathDat.c_str(), FILE_READ);
+  if (!fDat) return;
+
+  File fTxt = SD.open(pathTxt.c_str(), FILE_READ);
+  bool tieneTxt = (fTxt && fTxt.size() > 0);
+
+  // Asegurar que no existan temporales previos huérfanos
+  if (SD.exists(pathDatTmp.c_str())) SD.remove(pathDatTmp.c_str());
+  if (SD.exists(pathTxtTmp.c_str())) SD.remove(pathTxtTmp.c_str());
+
+  File fDatTmp = SD.open(pathDatTmp.c_str(), FILE_WRITE);
+  File fTxtTmp = tieneTxt ? SD.open(pathTxtTmp.c_str(), FILE_WRITE) : File();
+
+  if (!fDatTmp || (tieneTxt && !fTxtTmp)) {
+    if (fDat) fDat.close();
+    if (fTxt) fTxt.close();
+    if (fDatTmp) fDatTmp.close();
+    if (fTxtTmp) fTxtTmp.close();
+    return;
+  }
+
+  size_t totalRecords = fDat.size() / sizeof(SolveRecord);
+  SolveRecord bloqueEntrada[BUFFER_RECORDS];
+  SolveRecord bloqueSalida[BUFFER_RECORDS];
+  size_t salidaCount = 0;
+
+  uint8_t bufferCopiaTxt[256];
+  uint32_t nuevoOffsetTxt = 0;
+
+  for (size_t i = 0; i < totalRecords; i += BUFFER_RECORDS) {
+    size_t aLeer = std::min((size_t)BUFFER_RECORDS, totalRecords - i);
+    fDat.read((uint8_t*)bloqueEntrada, aLeer * sizeof(SolveRecord));
+
+    for (size_t j = 0; j < aLeer; j++) {
+      if (bloqueEntrada[j].archivado == 2) continue; // Descartar eliminadas
+
+      SolveRecord rec = bloqueEntrada[j];
+
+      // Copiar la mezcla si existe
+      if (tieneTxt && rec.longMezcla > 0) {
+        fTxt.seek(rec.offsetMezcla);
+
+        uint32_t restante = rec.longMezcla;
+        while (restante > 0) {
+          size_t tramo = std::min((size_t)sizeof(bufferCopiaTxt), (size_t)restante);
+          fTxt.read(bufferCopiaTxt, tramo);
+          fTxtTmp.write(bufferCopiaTxt, tramo);
+          restante -= tramo;
+        }
+
+        rec.offsetMezcla = nuevoOffsetTxt;
+        nuevoOffsetTxt += rec.longMezcla;
+      } else {
+        rec.offsetMezcla = 0;
+        rec.longMezcla = 0;
+      }
+
+      bloqueSalida[salidaCount++] = rec;
+
+      if (salidaCount == BUFFER_RECORDS) {
+        fDatTmp.write((const uint8_t*)bloqueSalida, salidaCount * sizeof(SolveRecord));
+        salidaCount = 0;
+      }
+    }
+  }
+
+  if (salidaCount > 0) {
+    fDatTmp.write((const uint8_t*)bloqueSalida, salidaCount * sizeof(SolveRecord));
+  }
+
+  // Cerrar todos los descriptores antes de manipular archivos en el sistema
+  fDat.close();
+  if (fTxt) fTxt.close();
+  fDatTmp.close();
+  if (fTxtTmp) fTxtTmp.close();
+
+  // Reemplazo atómico seguro para el .dat
+  SD.remove(pathDat.c_str());
+  SD.rename(pathDatTmp.c_str(), pathDat.c_str());
+
+  // Reemplazo para el .txt
+  if (tieneTxt) {
+    SD.remove(pathTxt.c_str());
+    SD.rename(pathTxtTmp.c_str(), pathTxt.c_str());
+  }
+
+  // Reconstruir la sesión en RAM con los nuevos indexSD
+  loadSession();
 }
